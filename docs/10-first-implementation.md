@@ -180,8 +180,11 @@ cargo test -p rustymail-store cancelling_a_pending_append_poisoned_the_stage
 | rusqlite 编译时拒绝某些 u64 参数/返回类型 | SQLite INTEGER 为有符号 64 位；使用受检转换和明确上界，读取负数报错 | 配额、UID 极限与幂等存储测试 |
 | Windows 冒烟测试子进程输出解码异常 | Python 文本模式采用本地编码，而 Rust 输出 UTF-8；显式指定 `encoding="utf-8"` | 独立脚本完整执行 |
 | Drop Store 后 prepared token 仍在另一个任务中 | 若进程锁只属于 Store，会允许新实例与残留准备动作并发；让 token 共同持有锁 | reservation/lock 生命周期回归测试 |
+| Linux CI 的存储测试统一报 UnsafePermissions，Windows 通过 | 测试错误地假定 tempfile 目录默认私有；显式以 0700 创建 Unix fixture，继续拒绝 0755 数据目录 | Unix 权限负例与两平台 CI；没有降低生产路径的权限要求 |
 
 这些是本轮实现中的具体发现，不能推导成“所有 Windows/Rust/SQLite 程序都有相同问题”。修复后仍需持续验证依赖升级、Unix 文件系统和运行负载的差异。
+
+权限案例可对照 [tempfile Builder 的 Unix 说明](https://docs.rs/tempfile/3.27.0/tempfile/struct.Builder.html#method.permissions)：默认目录权限还受 umask 影响；随机名字不等于目录私有。测试应创建满足服务契约的 fixture，再单独测试不满足契约的目录会被拒绝。
 
 ## 8. 故障实验怎样读
 

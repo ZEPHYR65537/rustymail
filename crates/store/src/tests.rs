@@ -1,6 +1,16 @@
 use super::*;
 use std::process::Command;
 
+fn private_test_directory() -> tempfile::TempDir {
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    builder.prefix("rustymail-store-").tempdir().unwrap()
+}
+
 fn options() -> StoreOptions {
     StoreOptions {
         disk_reserve_bytes: 1,
@@ -29,7 +39,7 @@ const RAW: &[u8] =
 
 #[tokio::test]
 async fn reservations_and_instance_lock_live_until_prepared_token_is_dropped() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let mut opts = options();
     opts.temporary_reserved_bytes = opts.max_message_bytes;
     let store = Store::open(directory.path(), opts.clone()).unwrap();
@@ -55,7 +65,7 @@ fn cancelling_a_pending_append_poisoned_the_stage() {
         .max_blocking_threads(1)
         .build()
         .unwrap();
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let store = Store::open(directory.path(), options()).unwrap();
     let mut stage = store.stage().unwrap();
     let (release, wait) = std::sync::mpsc::channel();
@@ -87,7 +97,7 @@ fn cancelling_a_pending_append_poisoned_the_stage() {
 
 #[tokio::test]
 async fn persists_complete_acceptance_and_account_scoped_export() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let id;
     {
         let mut store = Store::open(directory.path(), options()).unwrap();
@@ -124,7 +134,7 @@ async fn persists_complete_acceptance_and_account_scoped_export() {
 
 #[tokio::test]
 async fn quota_and_missing_recipient_roll_back_every_recipient() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let mut store = Store::open(directory.path(), options()).unwrap();
     store.create_account(&address("alice"), 1_000_000).unwrap();
     store.create_account(&address("bob"), 1).unwrap();
@@ -152,7 +162,7 @@ async fn quota_and_missing_recipient_roll_back_every_recipient() {
 
 #[tokio::test]
 async fn internal_retry_is_idempotent_but_conflicting_key_is_rejected() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let mut store = Store::open(directory.path(), options()).unwrap();
     store.create_account(&address("alice"), 1_000_000).unwrap();
     let original = prepared(&store, RAW).await;
@@ -177,7 +187,7 @@ async fn internal_retry_is_idempotent_but_conflicting_key_is_rejected() {
 
 #[tokio::test]
 async fn alias_uid_exhaustion_rolls_back_without_wraparound() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let mut store = Store::open(directory.path(), options()).unwrap();
     store.create_account(&address("alice"), 1_000_000).unwrap();
     store
@@ -216,7 +226,7 @@ async fn alias_uid_exhaustion_rolls_back_without_wraparound() {
 
 #[test]
 fn exclusive_lock_and_future_schema_are_fail_closed() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let store = Store::open(directory.path(), options()).unwrap();
     assert!(matches!(
         Store::open(directory.path(), options()),
@@ -240,7 +250,7 @@ fn exclusive_lock_and_future_schema_are_fail_closed() {
 
 #[tokio::test]
 async fn poisoned_stage_cannot_be_accepted_and_missing_blob_is_detected() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let mut opts = options();
     opts.max_message_bytes = 1024;
     let mut store = Store::open(directory.path(), opts).unwrap();
@@ -266,7 +276,7 @@ async fn poisoned_stage_cannot_be_accepted_and_missing_blob_is_detected() {
 
 #[tokio::test]
 async fn streams_the_full_size_limit_without_a_full_message_buffer() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
     let store = Store::open(directory.path(), options()).unwrap();
     let mut stage = store.stage().unwrap();
     let chunk = [b'x'; 16 * 1024];
@@ -326,7 +336,7 @@ fn child_process_crash_matrix_preserves_only_committed_messages() {
         "before_commit",
         "after_commit",
     ] {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = private_test_directory();
         let mut store = Store::open(directory.path(), options()).unwrap();
         store.create_account(&address("alice"), 1_000_000).unwrap();
         drop(store);
@@ -355,10 +365,22 @@ fn child_process_crash_matrix_preserves_only_committed_messages() {
 
 #[cfg(unix)]
 #[test]
+fn rejects_non_private_storage_directory() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = private_test_directory();
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(matches!(
+        Store::open(directory.path(), options()),
+        Err(StoreError::UnsafePermissions)
+    ));
+}
+
+#[cfg(unix)]
+#[test]
 fn rejects_symlinked_storage_directories() {
     use std::os::unix::fs::symlink;
-    let directory = tempfile::tempdir().unwrap();
-    let elsewhere = tempfile::tempdir().unwrap();
+    let directory = private_test_directory();
+    let elsewhere = private_test_directory();
     symlink(elsewhere.path(), directory.path().join("blobs")).unwrap();
     assert!(matches!(
         Store::open(directory.path(), options()),
