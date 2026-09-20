@@ -1,0 +1,289 @@
+use rustymail_core::{Address, config::Config};
+use rustymail_server::{LabServer, store_options};
+use rustymail_store::Store;
+use std::{io, net::SocketAddr, time::Duration};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::{
+        TcpStream,
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+    },
+    sync::oneshot,
+    time::timeout,
+};
+
+const LAB: &str = include_str!("../../../deploy/rustymail.lab.toml");
+
+struct Harness {
+    directory: tempfile::TempDir,
+    config: Config,
+    address: SocketAddr,
+    shutdown: oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<Result<(), rustymail_server::ServerError>>,
+}
+
+impl Harness {
+    async fn start(alice_quota: u64, bob_quota: u64, message_bytes: u64) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::parse(LAB).unwrap();
+        config.data_dir = directory.path().join("mail");
+        config.limits.message_bytes = message_bytes;
+        config.limits.header_bytes = 1024;
+        config.limits.disk_reserve_bytes = 1;
+        config.limits.disk_reserve_percent = 1;
+        config.limits.connections_per_ip = 2;
+        config.timeouts.shutdown_grace_seconds = 1;
+        config.timeouts.smtp_command_seconds = 2;
+        config.timeouts.data_idle_seconds = 2;
+        {
+            let mut store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+            store
+                .create_account(&Address::parse("alice@example.com").unwrap(), alice_quota)
+                .unwrap();
+            store
+                .create_account(&Address::parse("bob@example.com").unwrap(), bob_quota)
+                .unwrap();
+        }
+        // Port reservation can race with another local process. Retry only an
+        // address-in-use bind, rather than baking a fixed port into the suite.
+        let mut server = None;
+        for _ in 0..10 {
+            let reserve = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            config.listeners.smtp = reserve.local_addr().unwrap();
+            drop(reserve);
+            match LabServer::bind(config.clone()).await {
+                Ok(bound) => {
+                    server = Some(bound);
+                    break;
+                }
+                Err(rustymail_server::ServerError::Io(error))
+                    if error.kind() == io::ErrorKind::AddrInUse => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+        let server = server.expect("ephemeral port available");
+        let address = server.local_addr().unwrap();
+        let (shutdown, signal) = oneshot::channel();
+        let task = tokio::spawn(server.serve_until(async {
+            let _ = signal.await;
+        }));
+        Self {
+            directory,
+            config,
+            address,
+            shutdown,
+            task,
+        }
+    }
+
+    async fn stop(self) -> (tempfile::TempDir, Config) {
+        let _ = self.shutdown.send(());
+        timeout(Duration::from_secs(10), self.task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        (self.directory, self.config)
+    }
+}
+
+struct Client {
+    reader: BufReader<OwnedReadHalf>,
+    writer: OwnedWriteHalf,
+}
+impl Client {
+    async fn connect(address: SocketAddr) -> Self {
+        let stream = TcpStream::connect(address).await.unwrap();
+        let (read, write) = stream.into_split();
+        Self {
+            reader: BufReader::new(read),
+            writer: write,
+        }
+    }
+    async fn response(&mut self) -> (u16, String) {
+        timeout(Duration::from_secs(10), async {
+            let mut output = String::new();
+            loop {
+                let mut line = String::new();
+                assert!(
+                    self.reader.read_line(&mut line).await.unwrap() > 0,
+                    "unexpected EOF: {output}"
+                );
+                let done = line.as_bytes()[3] == b' ';
+                output.push_str(&line);
+                if done {
+                    return (line[..3].parse().unwrap(), output);
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
+    async fn command(&mut self, command: &str, expected: u16) -> String {
+        self.writer.write_all(command.as_bytes()).await.unwrap();
+        let (code, response) = self.response().await;
+        assert_eq!(code, expected, "{response}");
+        response
+    }
+    async fn greet(&mut self) {
+        assert_eq!(self.response().await.0, 220);
+        let response = self.command("EHLO test\r\n", 250).await;
+        assert!(!response.contains("AUTH"));
+        assert!(!response.contains("STARTTLS"));
+        assert!(!response.contains("PIPELINING"));
+    }
+    async fn envelope(&mut self) {
+        self.command("MAIL FROM:<sender@remote.test>\r\n", 250)
+            .await;
+        self.command("RCPT TO:<alice@example.com>\r\n", 250).await;
+    }
+}
+
+#[tokio::test]
+async fn actual_tcp_receives_dot_stuffed_utf8_and_persists_after_restart() {
+    let harness = Harness::start(1_000_000, 1_000_000, 25 * 1024 * 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    client.envelope().await;
+    client.command("DATA\r\n", 354).await;
+    let raw = "From: sender@remote.test\r\nSubject: lab\r\n\r\n你好\r\n.dot\r\n";
+    let wire = raw.replace("\r\n.dot", "\r\n..dot") + ".\r\n";
+    for byte in wire.bytes() {
+        client.writer.write_all(&[byte]).await.unwrap();
+    }
+    assert_eq!(client.response().await.0, 250);
+    client.command("QUIT\r\n", 221).await;
+    drop(client);
+    let (_directory, config) = harness.stop().await;
+    let store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+    let address = Address::parse("alice@example.com").unwrap();
+    let messages = store.list_messages(&address, 0, 10).unwrap();
+    assert_eq!(messages.len(), 1);
+    let mut output = Vec::new();
+    store
+        .export(&address, &messages[0].message_id, &mut output)
+        .unwrap();
+    assert_eq!(output, raw.as_bytes());
+    assert!(store.check_integrity().unwrap().healthy());
+}
+
+#[tokio::test]
+async fn rejects_relay_unknown_users_and_malformed_mail_clears_old_transaction() {
+    let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    client.command("AUTH PLAIN Zm9v\r\n", 502).await;
+    client.command("DATA\r\n", 503).await;
+    client.envelope().await;
+    client
+        .command("RCPT TO:<nobody@example.com>\r\n", 550)
+        .await;
+    client
+        .command("RCPT TO:<victim@external.test>\r\n", 550)
+        .await;
+    client
+        .command("MAIL FROM:<sender@remote.test> SIZE=oops\r\n", 501)
+        .await;
+    client.command("DATA\r\n", 503).await;
+    client.command("QUIT\r\n", 221).await;
+    drop(client);
+    let (_directory, config) = harness.stop().await;
+    let store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+    assert_eq!(store.check_integrity().unwrap().referenced_blobs, 0);
+}
+
+#[tokio::test]
+async fn multi_recipient_quota_failure_never_partially_delivers() {
+    let harness = Harness::start(1_000_000, 1, 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    client.envelope().await;
+    client.command("RCPT TO:<bob@example.com>\r\n", 250).await;
+    client.command("DATA\r\n", 354).await;
+    client
+        .command("Subject: test\r\n\r\nmail\r\n.\r\n", 452)
+        .await;
+    client.command("DATA\r\n", 503).await;
+    client.command("QUIT\r\n", 221).await;
+    drop(client);
+    let (_directory, config) = harness.stop().await;
+    let store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+    assert_eq!(store.check_integrity().unwrap().referenced_blobs, 0);
+}
+
+#[tokio::test]
+async fn oversize_actual_data_closes_without_executing_trailing_commands() {
+    let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    client.command("MAIL FROM:<> SIZE=1025\r\n", 552).await;
+    client.envelope().await;
+    client.command("DATA\r\n", 354).await;
+    let data = format!(
+        "\r\n{}\r\n{}\r\n.\r\nMAIL FROM:<>\r\n",
+        "x".repeat(600),
+        "y".repeat(600)
+    );
+    client.command(&data, 552).await;
+    let mut end = String::new();
+    let result = timeout(Duration::from_secs(2), client.reader.read_line(&mut end))
+        .await
+        .unwrap();
+    assert!(matches!(result, Ok(0)) || result.is_err());
+    drop(client);
+    let (_directory, config) = harness.stop().await;
+    assert_eq!(
+        Store::open(&config.data_dir, store_options(&config))
+            .unwrap()
+            .check_integrity()
+            .unwrap()
+            .referenced_blobs,
+        0
+    );
+}
+
+#[tokio::test]
+async fn bare_lf_and_partial_data_never_become_messages() {
+    let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    client.command("MAIL FROM:<>\n", 500).await;
+    drop(client);
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    client.envelope().await;
+    client.command("DATA\r\n", 354).await;
+    client
+        .writer
+        .write_all(b"Subject: unfinished\r\n\r\npartial")
+        .await
+        .unwrap();
+    drop(client);
+    let (_directory, config) = harness.stop().await;
+    let store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+    assert_eq!(store.check_integrity().unwrap().referenced_blobs, 0);
+}
+
+#[tokio::test]
+async fn per_ip_connection_limit_rejects_before_starting_a_session() {
+    let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
+    let mut first = Client::connect(harness.address).await;
+    first.greet().await;
+    let mut second = Client::connect(harness.address).await;
+    second.greet().await;
+    let mut third = Client::connect(harness.address).await;
+    assert_eq!(third.response().await.0, 421);
+    drop((first, second, third));
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn slow_command_expires_instead_of_extending_deadline_per_byte() {
+    let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    assert_eq!(client.response().await.0, 220);
+    client.writer.write_all(b"EH").await.unwrap();
+    assert_eq!(client.response().await.0, 421);
+    drop(client);
+    harness.stop().await;
+}

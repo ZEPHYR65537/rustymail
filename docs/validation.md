@@ -1,5 +1,7 @@
 # 设计阶段验证记录
 
+本页保留首个设计提交的历史验证结果。后续 Rust 实现、真实 TCP 与进程故障检查见 [0.1.0 L0 实现报告](../reports/0.1.0-lab/validation.md)；当前文档链接和附件检查可执行 `python scripts/check_docs.py`。
+
 日期：2026-09-21。环境：Windows / PowerShell 7.6.5，Emacs 31.1，Python 3.13.5。此记录只证明设计附件的静态可用性，不证明服务端、协议互通或生产可靠性。
 
 ## 检查项
@@ -26,10 +28,10 @@ emacs --batch -Q --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-comp
 emacs --batch -Q -L emacs -l rustymail.el --eval '(progn (setq rustymail-address "alice@example.com" rustymail-full-name "Rustymail Test" rustymail-host "mail.example.com") (rustymail-setup))'
 ```
 
-SQL 草案可以在空 SQLite 3.37+ 数据库中执行，随后检查 `PRAGMA foreign_key_check`、`PRAGMA integrity_check`、`PRAGMA journal_mode` 和 `PRAGMA synchronous`。五项负例使用独立 savepoint 验证约束拒绝，再 rollback，避免留下失败案例的数据。配置文件使用 Python 3.11+ 的 `tomllib` 解析；这只是语法检查，Rust 配置验证器仍待实现。
+SQL 草案可以在空 SQLite 3.37+ 数据库中执行，随后检查 `PRAGMA foreign_key_check`、`PRAGMA integrity_check`、`PRAGMA journal_mode` 和 `PRAGMA synchronous`。五项负例使用独立 savepoint 验证约束拒绝，再 rollback，避免留下失败案例的数据。配置文件使用 Python 3.11+ 的 `tomllib` 解析；设计阶段这只是语法检查，后续 L0 已增加 Rust 严格配置验证器。
 
-## 未执行
+## 设计提交时未执行的检查
 
-Rust 构建/测试、Linux systemd 启动、SMTP/IMAP 真互通、网络安全验收、崩溃及断电故障注入、性能基准、72 小时稳定性、DNS/TLS 公网配置、真实收发和备份恢复演练均未执行。当前没有 Rust 服务端，也没有为本项目访问真实邮件账号或投递测试邮件。
+设计提交当时尚未有 Rust 服务端，因此未执行 Rust 构建/测试、SMTP/IMAP 互通与故障注入。后续 L0 已完成其中一部分，结果以新报告为准。Linux systemd 生产启动、IMAP、断电、性能基准、72 小时稳定性、DNS/TLS 公网配置、真实外部收发和备份恢复演练仍未验收。
 
 Emacs 的 `.gpg` 凭据没有创建，没有修改用户已有 init，也没有导入任何真实密码。客户端仅使用占位值完成本机静态验证。

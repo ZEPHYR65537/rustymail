@@ -1,0 +1,13 @@
+[package]
+name = "rustymail-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustymail-core.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

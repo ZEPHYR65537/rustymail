@@ -4,7 +4,7 @@
 
 采用 Emacs 内置 Gnus / nnimap 读取邮箱，smtpmail 发信，auth-source 读取加密凭据。不依赖 mu4e、notmuch、mbsync 或额外本地索引；先保持客户端安装简单，把注意力放在协议和服务端。
 
-[rustymail.el](../emacs/rustymail.el) 是实际配置文件，加载本身不联网；显式调用 `rustymail-setup` 后才应用设置，`M-x gnus` 才开始连接。已用本机 Emacs 31.1 检查加载和变量接口，详细结果见[验证记录](validation.md)。目标兼容 Emacs 29+，旧版本尚未验证；没有 Rust 服务端，因此目前没有真实收发互通结果。
+[rustymail.el](../emacs/rustymail.el) 是实际配置文件，加载本身不联网；显式调用 `rustymail-setup` 后才应用设置，`M-x gnus` 才开始连接。已用本机 Emacs 31.1 检查加载和变量接口，详细结果见[验证记录](validation.md)。目标兼容 Emacs 29+，旧版本尚未验证。当前 Rust L0 接收器没有 TLS/IMAP/AUTH，不能与本配置互通；保留客户端安全要求，待 M2/M5 完成后验证真实收发。
 
 配置面向**独立的单账户邮件 profile**，会修改全局身份、SMTP、auth-source 和 Gnus server 列表。已有多账户 Gnus 配置应在独立 Emacs 环境试用，再按账户 context 合并，不能直接覆盖生产工作配置。
 

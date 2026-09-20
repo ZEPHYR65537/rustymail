@@ -1,6 +1,6 @@
 # 部署、运维与故障处置
 
-> 状态：这是未来服务端的操作契约。目前尚无 `rustymaild` 或 `rustymailctl` 可执行程序，所有这类命令均待实现和 Linux 集成验证。DNS / OpenSSL 检查可以在已有环境使用，但本文中的 example.com、192.0.2.10、密钥和账号都只是占位符。
+> 状态：这是生产服务的目标操作契约。当前已有 L0 `rustymaild` / `rustymailctl`，仅实现环回 SMTP 与离线账号/原文管理；以[实际运行教程](10-first-implementation.md)和 `--help` 为准。下文的生产服务、TLS、备份、队列等命令尚待实现，不能直接照做部署。DNS / OpenSSL 检查可以在已有环境使用，但 example.com、192.0.2.10、密钥和账号均为占位符。
 
 ## 1. 部署前的现实条件
 
