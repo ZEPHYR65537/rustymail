@@ -1,0 +1,129 @@
+# DESIGN CONTRACT ONLY: no server implementation currently reads this file.
+# L0 defaults bind loopback only. Replace all placeholders before production.
+schema_version = 1
+mode = "lab"
+hostname = "mail.example.com"
+local_domains = ["example.com"]
+data_dir = "/var/lib/rustymail"
+admin_socket = "/run/rustymail/admin.sock"
+metrics_bind = "127.0.0.1:9090"
+
+[listeners]
+smtp = "127.0.0.1:2525"
+submissions = "127.0.0.1:2465"
+submission = "127.0.0.1:2587"
+imaps = "127.0.0.1:2993"
+
+[tls]
+certificate_file = "/etc/rustymail/tls/fullchain.pem"
+private_key_file = "/etc/rustymail/tls/privkey.pem"
+minimum_version = "1.2"
+handshake_timeout_seconds = 15
+
+[limits]
+connections = 256
+connections_per_ip = 8
+imap_sessions_per_account = 8
+tls_handshakes = 16
+message_bytes = 26214400
+header_bytes = 262144
+recipients_per_message = 100
+ingest_concurrency = 16
+stream_buffer_bytes = 16384
+selected_view_total_bytes = 33554432
+selected_mailbox_messages = 100000
+imap_event_bytes_per_session = 65536
+disk_reserve_bytes = 2147483648
+disk_reserve_percent = 10
+temporary_reserved_bytes = 419430400
+
+[timeouts]
+smtp_command_seconds = 300
+data_idle_seconds = 180
+data_total_seconds = 1800
+submission_unauthenticated_seconds = 60
+imap_authenticated_idle_seconds = 2100
+append_idle_seconds = 180
+append_total_seconds = 1800
+shutdown_grace_seconds = 60
+
+[store]
+journal_mode = "wal"
+synchronous = "full"
+writer_queue = 128
+reader_threads = 2
+writer_cache_kib = 8192
+reader_cache_kib_each = 4096
+gc_mode = "offline"
+
+[authentication]
+argon2_memory_kib = 65536
+argon2_iterations = 3
+argon2_lanes = 4
+concurrency = 2
+waiting_requests = 16
+queue_timeout_seconds = 2
+
+[parser_worker]
+# Requires a separately constrained Linux service/cgroup, not just a timeout.
+socket = "/run/rustymail-worker/worker.sock"
+concurrency = 1
+memory_limit_bytes = 268435456
+timeout_seconds = 30
+mime_max_depth = 32
+mime_max_parts = 5000
+metadata_max_bytes = 1048576
+
+[spam]
+required = true
+endpoint = "http://127.0.0.1:11333/checkv2"
+timeout_seconds = 30
+concurrency = 2
+response_max_bytes = 1048576
+on_error = "temporary_failure"
+
+[dns]
+concurrency = 32
+timeout_seconds = 5
+cache_entries = 4096
+cache_bytes = 8388608
+
+[delivery]
+# Disabled in the lab template. Production must explicitly select relay or direct.
+mode = "disabled"
+concurrency = 16
+per_domain_concurrency = 2
+batch_size = 128
+retry_seconds = [1800, 3600, 7200, 14400]
+retry_jitter_percent = 20
+max_age_seconds = 432000
+connect_timeout_seconds = 30
+banner_timeout_seconds = 300
+command_timeout_seconds = 300
+data_command_timeout_seconds = 120
+data_write_timeout_seconds = 180
+final_reply_timeout_seconds = 600
+
+[relay]
+host = "smtp.relay.example"
+port = 465
+tls = "implicit"
+username = "REPLACE_ME"
+password_file = "/etc/rustymail/secrets/relay-password"
+
+[direct]
+mta_sts = true
+tls_policy = "verified_or_defer"
+plaintext_exception_domains = []
+allow_private_mx_addresses = false
+
+[dkim]
+domain = "example.com"
+selector = "s202609"
+private_key_file = "/etc/rustymail/secrets/dkim.pem"
+
+[logging]
+level = "info"
+format = "json"
+include_message_bodies = false
+include_auth_payloads = false

@@ -1,0 +1,12 @@
+/target/
+/reports/local/
+*.elc
+*.eln
+.authinfo
+.authinfo.gpg
+*.pem
+*.key
+/data/
+/backups/
+/deploy/server.toml
+/deploy/secrets/

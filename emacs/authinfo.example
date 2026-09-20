@@ -1,0 +1,5 @@
+# FORMAT EXAMPLE ONLY. These are not real credentials.
+# Create ~/.authinfo.gpg in Emacs and enter the real values there.
+# Do not put real passwords in this file or commit them to version control.
+machine mail.example.com login alice@example.com port 993 password REPLACE_WITH_APPLICATION_PASSWORD
+machine mail.example.com login alice@example.com port 465 password REPLACE_WITH_APPLICATION_PASSWORD

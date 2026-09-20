@@ -1,0 +1,47 @@
+# DESIGN TEMPLATE ONLY. The binaries, commands, worker unit and production
+# configuration are not implemented yet. Validate on the target Linux host.
+[Unit]
+Description=rustymail server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=rustymail
+Group=rustymail
+UMask=0077
+StateDirectory=rustymail
+StateDirectoryMode=0700
+RuntimeDirectory=rustymail
+RuntimeDirectoryMode=0750
+ExecStartPre=/usr/local/lib/rustymail/current/rustymaild --config /etc/rustymail/server.toml check
+ExecStart=/usr/local/lib/rustymail/current/rustymaild --config /etc/rustymail/server.toml serve
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=75
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ReadWritePaths=/var/lib/rustymail /run/rustymail
+LimitNOFILE=8192
+TasksMax=128
+# Applies to this main service only; worker and Rspamd need independent limits.
+MemoryHigh=448M
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
