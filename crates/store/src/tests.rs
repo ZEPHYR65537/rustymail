@@ -297,6 +297,12 @@ async fn streams_the_full_size_limit_without_a_full_message_buffer() {
 /// Rust destructors, which exercises SQLite recovery but is NOT a power cut.
 #[tokio::test]
 async fn crash_child_entry() {
+    if std::env::var("RUSTYMAIL_TEST_INHERIT_LOCK").as_deref() == Ok("1") {
+        // The parent redirects stdout to a clone of its lock descriptor and
+        // closes this stdin pipe only after trying to reopen the store.
+        let _ = std::io::stdin().read(&mut [0u8; 1]);
+        return;
+    }
     let Ok(root) = std::env::var("RUSTYMAIL_TEST_CRASH_ROOT") else {
         return;
     };
@@ -361,6 +367,32 @@ fn child_process_crash_matrix_preserves_only_committed_messages() {
             "{point}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn last_owner_unlocks_even_if_a_child_inherits_the_descriptor() {
+    use std::process::Stdio;
+    let directory = private_test_directory();
+    let store = Store::open(directory.path(), options()).unwrap();
+    let inherited = store.lock.0.try_clone().unwrap();
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "tests::crash_child_entry"])
+        .env("RUSTYMAIL_TEST_INHERIT_LOCK", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(inherited))
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    drop(store);
+    let reopened = Store::open(directory.path(), options());
+    drop(child.stdin.take());
+    let child_status = child.wait().unwrap();
+    assert!(child_status.success());
+    assert!(
+        reopened.is_ok(),
+        "inherited descriptor must not retain an owner's lock"
+    );
 }
 
 #[cfg(unix)]

@@ -19,11 +19,13 @@ python scripts/check_docs.py
 
 上述本机检查全部通过；文档检查覆盖 15 个 Markdown 文件与 62 个本地链接。另已执行 `cargo build --workspace --release --locked` 与 `python scripts/smoke.py --bin-dir target/release`，优化构建的同一链路通过。这里未测量性能，不将优化构建成功解释为吞吐或内存目标已满足。
 
-本机测试覆盖 5 个 core、6 个 protocol、7 个真实 TCP、11 个 store 测试条目，共 29 个。store 数量包括 1 个专供子进程启动的故障辅助入口；父测试实际启动六个故障子进程。Unix 另有符号链接与非私有目录的 2 个拒绝测试，共 31 个条目。独立 Python 客户端另行检查最终 250 后强制结束进程、恢复、原文字节、禁止覆盖导出和独占管理锁。
+本机测试覆盖 5 个 core、6 个 protocol、7 个真实 TCP、11 个 store 测试条目，共 29 个。store 数量包括 1 个子进程辅助入口；父测试实际启动六个故障子进程。Unix 另有符号链接、非私有目录和描述符继承的 3 个测试，共 32 个条目。独立 Python 客户端另行检查最终 250 后强制结束进程、恢复、原文字节、禁止覆盖导出和独占管理锁。
 
 CI 已配置 Ubuntu 24.04 与 Windows 两个平台，执行相同格式、Clippy、测试、构建和独立互通检查。CI 的实际运行结果以[仓库 Actions](https://github.com/ZEPHYR65537/rustymail/actions)中对应提交为准；本文不会把“创建工作流”视为“远程已通过”。
 
 首轮 CI 发现 Unix 存储测试 fixture 未显式设置 0700，触发预期的数据目录权限拒绝；修复为创建时设置私有权限，并补充 0755 目录必须拒绝的负例。原有服务权限校验保留，详见教程中的问题记录。
+
+随后发现并行子进程测试下 flock 可能因继承的描述符延迟释放。Linux 子系统的最小 fork 实验证明了“父进程 close 后子进程仍能维持锁”的行为；服务改为最终锁令牌 Drop 时显式 unlock，并加入受控子进程继承回归用例。该系统调用实验不替代 Rust 在 Linux CI 中的完整复测。
 
 ## 覆盖的关键不变量
 

@@ -126,8 +126,20 @@ pub struct Store {
     connection: Connection,
     root: Arc<PathBuf>,
     options: StoreOptions,
-    lock: Arc<File>,
+    lock: Arc<InstanceLock>,
     reserved_bytes: Arc<Mutex<u64>>,
+}
+
+struct InstanceLock(File);
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        // Closing this descriptor alone is insufficient on Unix when another
+        // thread concurrently forks: the child briefly shares the open-file
+        // description, even with CLOEXEC. Unlock at the final Rust owner's end.
+        // Staged/prepared tokens retain this Arc until their work is finished.
+        let _ = self.0.unlock();
+    }
 }
 
 fn now_ms() -> Result<i64, StoreError> {
@@ -164,6 +176,7 @@ impl Store {
             Err(TryLockError::WouldBlock) => return Err(StoreError::Locked),
             Err(TryLockError::Error(error)) => return Err(error.into()),
         }
+        let lock = Arc::new(InstanceLock(lock));
         private_directory(&root.join("staging"))?;
         private_directory(&root.join("blobs"))?;
         for name in ["meta.sqlite", "meta.sqlite-wal", "meta.sqlite-shm"] {
@@ -213,7 +226,7 @@ impl Store {
             connection,
             root,
             options,
-            lock: Arc::new(lock),
+            lock,
             reserved_bytes: Arc::new(Mutex::new(0)),
         })
     }

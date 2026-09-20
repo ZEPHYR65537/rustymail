@@ -1,4 +1,4 @@
-use crate::{StoreError, StoreOptions};
+use crate::{InstanceLock, StoreError, StoreOptions};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -106,7 +106,7 @@ pub struct StagedMessage {
     max_size: u64,
     poisoned: bool,
     reservation: Option<DiskReservation>,
-    lock: Arc<File>,
+    lock: Arc<InstanceLock>,
 }
 
 /// Only `StagedMessage::prepare` can construct this durability token.
@@ -118,7 +118,7 @@ pub struct PreparedMessage {
     pub(crate) size: u64,
     pub(crate) hash: String,
     _reservation: DiskReservation,
-    _lock: Arc<File>,
+    _lock: Arc<InstanceLock>,
 }
 
 struct DiskReservation {
@@ -137,7 +137,7 @@ impl Drop for DiskReservation {
 impl StagedMessage {
     pub(crate) fn create(
         root: Arc<PathBuf>,
-        lock: Arc<File>,
+        lock: Arc<InstanceLock>,
         reserved: Arc<Mutex<u64>>,
         options: &StoreOptions,
     ) -> Result<Self, StoreError> {

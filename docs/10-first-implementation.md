@@ -181,10 +181,13 @@ cargo test -p rustymail-store cancelling_a_pending_append_poisoned_the_stage
 | Windows 冒烟测试子进程输出解码异常 | Python 文本模式采用本地编码，而 Rust 输出 UTF-8；显式指定 `encoding="utf-8"` | 独立脚本完整执行 |
 | Drop Store 后 prepared token 仍在另一个任务中 | 若进程锁只属于 Store，会允许新实例与残留准备动作并发；让 token 共同持有锁 | reservation/lock 生命周期回归测试 |
 | Linux CI 的存储测试统一报 UnsafePermissions，Windows 通过 | 测试错误地假定 tempfile 目录默认私有；显式以 0700 创建 Unix fixture，继续拒绝 0755 数据目录 | Unix 权限负例与两平台 CI；没有降低生产路径的权限要求 |
+| Linux 并行故障测试期间，关闭 Store 后重开偶发 Locked | 子进程继承的描述符可延长 flock 生命周期；最终 Rust 锁持有者 Drop 时显式 unlock，所有暂存/准备令牌仍共同持有锁 | Unix 受控继承用例：子进程仍持有描述符时，父进程最后持有者释放后能重新加锁 |
 
 这些是本轮实现中的具体发现，不能推导成“所有 Windows/Rust/SQLite 程序都有相同问题”。修复后仍需持续验证依赖升级、Unix 文件系统和运行负载的差异。
 
 权限案例可对照 [tempfile Builder 的 Unix 说明](https://docs.rs/tempfile/3.27.0/tempfile/struct.Builder.html#method.permissions)：默认目录权限还受 umask 影响；随机名字不等于目录私有。测试应创建满足服务契约的 fixture，再单独测试不满足契约的目录会被拒绝。
+
+锁案例体现“Rust 所有权”与“内核资源引用”不是同一层：CLOEXEC 在 exec 时关闭描述符，不能消除 fork 到 exec 之间的继承窗口。受控用例通过子进程标准输出显式传入锁描述符，并用 stdin 管道延长窗口；无需在 Rust 中引入 unsafe fork。最终 Arc 释放时执行 unlock，提前释放 Store 本身则不会越过仍活跃的 prepared token。
 
 ## 8. 故障实验怎样读
 
