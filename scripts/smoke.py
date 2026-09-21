@@ -93,7 +93,8 @@ def main():
                 assert client.mail("sender@remote.test")[0] == 250
                 assert client.rcpt("outside@remote.test")[0] == 550
                 assert client.rset()[0] == 250
-                assert client.sendmail("sender@remote.test", ["alice@example.com"], raw) == {}
+                assert client.sendmail("sender@remote.test", ["alice@example.com"], raw,
+                                       mail_options=['BODY=8BITMIME']) == {}
                 # sendmail returned only after the receiver's final 250.
                 client.close()
                 client = None

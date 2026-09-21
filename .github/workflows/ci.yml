@@ -65,6 +65,16 @@ jobs:
           path: reports/local/m32-smoke.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Independent SMTP input contract and relay matrix
+        run: python scripts/m33_smoke.py
+      - name: Preserve M3.3 contract evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m33-contract-${{ matrix.os }}
+          path: reports/local/m33-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
 
   linux-storage-labs:
     needs: test
@@ -88,6 +98,10 @@ jobs:
         run: cargo build --workspace --release --locked
       - name: Measure native SMTP latency and daemon memory
         run: python scripts/benchmark.py
+      - name: Build disposable TLS certificate generator
+        run: cargo build -p rustymail-server --example m2_certificates --release --locked
+      - name: SMTP saturation, mixed TLS traffic and recovery
+        run: python scripts/smtp_pressure.py
       - name: Compare owned and reusable DATA framing
         run: cargo run -p rustymail-protocol --example framing --release --locked > reports/local/framing.json
       - name: Build static guest programs
@@ -107,6 +121,7 @@ jobs:
             reports/local/benchmark.json
             reports/local/framing.json
             reports/local/powercut.json
+            reports/local/smtp-pressure.json
             reports/local/failed-*.log
           if-no-files-found: warn
           retention-days: 14

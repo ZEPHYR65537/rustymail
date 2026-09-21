@@ -77,7 +77,7 @@ def main():
                     return client
 
                 def envelope(client, sender, recipients):
-                    assert client.mail(sender, options=['SIZE=1'] if client.does_esmtp else [])[0] == 250
+                    assert client.mail(sender, options=['SIZE=1', 'BODY=8BITMIME'] if client.does_esmtp else [])[0] == 250
                     for recipient in recipients:
                         assert client.rcpt(recipient)[0] == 250
 

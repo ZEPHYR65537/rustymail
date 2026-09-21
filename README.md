@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.5.0 / M3.2 L0 实验实现：已有存储恢复、身份/TLS、三个 SMTP 入口及最终本地交付头部。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或进入[本地交付实验](docs/15-m3-local-delivery.md)。M3.3 的完整输入契约与压力验收仍待完成。
+**当前是 0.6.0 / M3.3 L0 实验实现：已有存储恢复、身份/TLS、三个 SMTP 入口、最终本地交付及输入契约实验。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或进入[输入契约与压力实验](docs/16-m3-input-contract.md)。实际验收状态以 [M3.3 报告](reports/m3.3/validation.md)为准；下一步为 M4 持久队列与中继。
 
 0.3.1 修复磁盘任务取消、撤销通知丢失和管理响应超限，复用 DATA 行缓冲并收紧组合资源预算。原理与保留限制见[取消与资源边界教程](docs/13-cancellation-and-bounds.md)，回归证据见[修复验证报告](reports/0.3.1/validation.md)。
 
@@ -40,8 +40,8 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 
 | 已运行的行为 | 边界 |
 | --- | --- |
-| EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT | 简化 ASCII dot-atom 信封；非完整 SMTP 一致性声明 |
-| SIZE、8BITMIME、严格 CRLF 与点转义 | 不支持 SMTPUTF8、PIPELINING |
+| EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT、HELP、VRFY | 简化 ASCII dot-atom 信封；VRFY 不查询账号；非完整 SMTP 一致性声明 |
+| SIZE、8BITMIME、严格 CRLF 与点转义 | 高位正文要求显式 BODY=8BITMIME；头部为 ASCII；不支持 SMTPUTF8、PIPELINING |
 | 三入口角色、STARTTLS 状态重置与预读丢弃 | 只在环回启用；共享连接/握手/接收预算；握手失败关闭 |
 | 隐式 TLS、AUTH PLAIN、Argon2id 应用密码 | 登录仅在 TLS 实验模式启用；散列并发/等待有界；无 LOGIN/OAuth |
 | send-as、权限 scope、事务内重新授权、撤销旧会话 | 提交只接受受限的单个 ASCII From；无完整 MIME 地址解析；只投递本地邮箱 |
@@ -71,6 +71,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 14. [取消与资源边界](docs/13-cancellation-and-bounds.md)：从真实缺陷学习生命周期、通知、字节预算和性能证据。
 15. [M3.1：入口职责与 STARTTLS](docs/14-m3-starttls.md)：共享准入、协议切换、预读丢弃、状态重置及独立客户端反例。
 16. [M3.2：最终本地交付](docs/15-m3-local-delivery.md)：追踪字段、三种字节表示、流式过滤、共享文件和幂等重放。
+17. [M3.3：输入契约与资源恢复](docs/16-m3-input-contract.md)：编码协商、回复分类、状态枚举、48 行权限矩阵和有限压力验收。
 
 ## 配套文件
 
@@ -88,6 +89,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [M2 验证报告](reports/m2/validation.md) | 0.3.0 的 TLS、身份、Unix 管理证据及依赖审计 |
 | [M3.1 验证报告](reports/m3.1/validation.md) | 0.4.0 的三入口与 STARTTLS、两平台协议及 Linux 存储故障回归 |
 | [M3.2 验证报告](reports/m3.2/validation.md) | 0.5.0 的交付头部、大小/配额、共享/重放、存储故障及匿名性能数据 |
+| [M3.3 验证报告](reports/m3.3/validation.md) | 0.6.0 的输入契约、角色矩阵、容量拒绝和恢复证据 |
 | [验证记录](docs/validation.md) | 设计阶段的历史静态检查，以及各阶段验证报告入口 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。

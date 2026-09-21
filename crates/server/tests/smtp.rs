@@ -158,7 +158,10 @@ async fn actual_tcp_receives_dot_stuffed_utf8_and_persists_after_restart() {
     let harness = Harness::start(1_000_000, 1_000_000, 25 * 1024 * 1024).await;
     let mut client = Client::connect(harness.address).await;
     client.greet().await;
-    client.envelope().await;
+    client
+        .command("MAIL FROM:<sender@remote.test> BODY=8BITMIME\r\n", 250)
+        .await;
+    client.command("RCPT TO:<alice@example.com>\r\n", 250).await;
     client.command("DATA\r\n", 354).await;
     let raw = "From: sender@remote.test\r\nSubject: lab\r\n\r\n你好\r\n.dot\r\n";
     let wire = raw.replace("\r\n.dot", "\r\n..dot") + ".\r\n";

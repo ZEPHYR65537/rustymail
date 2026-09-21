@@ -4,7 +4,7 @@
 
 本阶段的测试范围、条款到测试的映射与原始证据见 [M3.1 验证报告](../reports/m3.1/validation.md)。
 
-本章记录 0.4.0 的阶段实现，当时尚不添加 Received/Return-Path；0.5.0 已在 [M3.2](15-m3-local-delivery.md)补上最终交付表示，独立实验也同步校验新头部与保留内容。M3 整体尚未完成，仍不开放公网、外域投递、PIPELINING、SMTPUTF8 或 IMAP。不得把三个实验端口可用理解为生产 SMTP 已完成。
+本章记录 0.4.0 的阶段实现，当时尚不添加 Received/Return-Path；0.5.0 在 [M3.2](15-m3-local-delivery.md)补上最终交付表示，0.6.0 的输入契约与有限压力见 [M3.3](16-m3-input-contract.md)。仍不开放公网、外域投递、PIPELINING、SMTPUTF8 或 IMAP。不得把三个实验端口可用理解为生产 SMTP 已完成。
 
 ## 1. 先确定入口职责
 

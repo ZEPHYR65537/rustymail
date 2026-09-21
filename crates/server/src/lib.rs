@@ -15,7 +15,7 @@ use worker::{StoreClient, StoreWorker};
 
 use rustymail_core::config::{Config, ConfigError};
 use rustymail_protocol::{
-    Action, Command, Envelope, LineDecoder, ParseError, Reply, Session, decode_data_frame,
+    Action, Body, Command, Envelope, LineDecoder, ParseError, Reply, Session, decode_data_frame,
     parse_command,
 };
 use rustymail_store::{
@@ -419,7 +419,7 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
         };
         let incoming = tokio::select! {
             _=revocations.wait(principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
-            result=tokio::time::timeout_at(deadline,line(&mut read,if auth.is_some(){1024}else{512}))=>result,
+            result=tokio::time::timeout_at(deadline,line(&mut read,if auth.is_some(){1024}else{538}))=>result,
         };
         let bytes = zeroize::Zeroizing::new(match incoming {
             Ok(Ok(Some(bytes))) => bytes,
@@ -433,11 +433,21 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                 return Ok(());
             }
         });
-        if bytes
-            .split(|&b| b == b' ')
-            .next()
-            .is_some_and(|word| word.eq_ignore_ascii_case(b"AUTH"))
-        {
+        let verb = bytes.split(|&b| b == b' ').next().unwrap_or_default();
+        // RFC 1870 grants MAIL 26 additional octets; AUTH has its own bounded
+        // dialog. The larger read buffer must not enlarge every command limit.
+        let limit = if verb.eq_ignore_ascii_case(b"AUTH") && role.submission() {
+            1024
+        } else if verb.eq_ignore_ascii_case(b"MAIL") {
+            538
+        } else {
+            512
+        };
+        if bytes.len() + 2 > limit {
+            reply(&mut write, Reply::new(500, "5.5.2 Command too long")).await?;
+            return Ok(());
+        }
+        if verb.eq_ignore_ascii_case(b"AUTH") {
             if !role.submission() {
                 reply(
                     &mut write,
@@ -476,10 +486,6 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
             }
             continue;
         }
-        if bytes.len() + 2 > 512 {
-            reply(&mut write, Reply::new(500, "5.5.2 Command too long")).await?;
-            return Ok(());
-        }
         let command = match parse_command(&bytes) {
             Ok(command) => command,
             Err(error) => {
@@ -506,7 +512,14 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
             && !encrypted
             && !matches!(
                 command,
-                Command::Ehlo(_) | Command::Noop | Command::StartTls | Command::Quit
+                Command::Ehlo(_)
+                    | Command::Helo(_)
+                    | Command::Reset
+                    | Command::Noop
+                    | Command::Help
+                    | Command::Verify
+                    | Command::StartTls
+                    | Command::Quit
             )
         {
             reply(
@@ -683,7 +696,7 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                 .await?;
                 let receiving = tokio::select! {
                     _=revocations.wait(principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
-                    result=timeout(Duration::from_secs(config.timeouts.data_total_seconds),receive_message(&mut read,stage,&config,auth.is_some(),&prefix))=>result,
+                    result=timeout(Duration::from_secs(config.timeouts.data_total_seconds),receive_message(&mut read,stage,&config,auth.is_some(),envelope.body,&prefix))=>result,
                 };
                 let (message, author) = match receiving {
                     Ok(Ok(message)) => message,
@@ -707,6 +720,24 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                         reply(&mut write, Reply::new(550, "5.6.0 Invalid message headers")).await?;
                         return Ok(());
                     }
+                    Ok(Err(ServerError::Io(error)))
+                        if error.kind() == io::ErrorKind::InvalidData =>
+                    {
+                        reply(
+                            &mut write,
+                            Reply::new(554, "5.6.0 Invalid DATA framing or encoding"),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    Ok(Err(ServerError::Io(error))) if error.kind() == io::ErrorKind::TimedOut => {
+                        reply(&mut write, Reply::new(421, "4.4.2 DATA timeout")).await?;
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        reply(&mut write, Reply::new(421, "4.4.2 DATA timeout")).await?;
+                        return Ok(());
+                    }
                     _ => {
                         let _ = reply(
                             &mut write,
@@ -718,7 +749,9 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                 };
                 // The result is ambiguous after dispatch if the reply channel
                 // fails or times out. In that case close without a false 4xx.
-                let Envelope { sender, recipients } = envelope;
+                let Envelope {
+                    sender, recipients, ..
+                } = envelope;
                 let operation_id = operation.simple().to_string();
                 let plan = Acceptance {
                     operation_id: operation_id.clone(),
@@ -818,6 +851,7 @@ async fn receive_message<R: AsyncRead + Unpin>(
     mut stage: StagedMessage,
     config: &Config,
     submission: bool,
+    body: Body,
     prefix: &str,
 ) -> Result<(PreparedMessage, Option<rustymail_core::Address>), ServerError> {
     let mut in_headers = true;
@@ -858,6 +892,13 @@ async fn receive_message<R: AsyncRead + Unpin>(
             }
             return Ok((stage.prepare().await?, author));
         };
+        if body == Body::SevenBit && !data.is_ascii() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "8-bit DATA requires BODY=8BITMIME",
+            )
+            .into());
+        }
         input_bytes = input_bytes
             .checked_add(data.len() as u64)
             .filter(|size| *size <= config.limits.message_bytes)

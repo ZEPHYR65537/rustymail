@@ -87,6 +87,14 @@ impl LineDecoder {
     }
 }
 
+/// Transfer encoding is independent of MIME parsing; 8BITMIME is not BINARYMIME.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Body {
+    #[default]
+    SevenBit,
+    EightBitMime,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Ehlo(String),
@@ -94,11 +102,14 @@ pub enum Command {
     Mail {
         sender: Option<Address>,
         size: Option<u64>,
+        body: Option<Body>,
     },
     Rcpt(Address),
     Data,
     Reset,
     Noop,
+    Help,
+    Verify,
     StartTls,
     Quit,
     Unsupported,
@@ -137,27 +148,38 @@ pub fn parse_command(line: &[u8]) -> Result<Command, ParseError> {
                 Some(Address::parse(path).map_err(|_| ParseError::Syntax)?)
             };
             let mut size = None;
-            let mut body_seen = false;
+            let mut body = None;
             for param in parameters.split_ascii_whitespace() {
                 let (key, value) = param
                     .split_once('=')
                     .ok_or(ParseError::UnsupportedParameter)?;
-                if key.eq_ignore_ascii_case("SIZE") && size.is_none() {
-                    if value.is_empty() || !value.bytes().all(|c| c.is_ascii_digit()) {
+                if key.eq_ignore_ascii_case("SIZE") {
+                    if size.is_some()
+                        || value.is_empty()
+                        || value.len() > 20
+                        || !value.bytes().all(|c| c.is_ascii_digit())
+                    {
                         return Err(ParseError::Syntax);
                     }
-                    size = Some(value.parse().map_err(|_| ParseError::Syntax)?);
-                } else if key.eq_ignore_ascii_case("BODY")
-                    && !body_seen
-                    && (value.eq_ignore_ascii_case("7BIT")
-                        || value.eq_ignore_ascii_case("8BITMIME"))
-                {
-                    body_seen = true;
+                    // Every 20-digit decimal is legal syntax. Values above u64
+                    // still mean "too large" for our bounded server, not 501.
+                    size = Some(value.parse().unwrap_or(u64::MAX));
+                } else if key.eq_ignore_ascii_case("BODY") {
+                    if body.is_some() {
+                        return Err(ParseError::Syntax);
+                    }
+                    body = Some(if value.eq_ignore_ascii_case("7BIT") {
+                        Body::SevenBit
+                    } else if value.eq_ignore_ascii_case("8BITMIME") {
+                        Body::EightBitMime
+                    } else {
+                        return Err(ParseError::UnsupportedParameter);
+                    });
                 } else {
                     return Err(ParseError::UnsupportedParameter);
                 }
             }
-            Ok(Command::Mail { sender, size })
+            Ok(Command::Mail { sender, size, body })
         }
         "RCPT" => {
             let (path, parameters) = parse_path(args, "TO:")?;
@@ -171,9 +193,11 @@ pub fn parse_command(line: &[u8]) -> Result<Command, ParseError> {
         "DATA" if args.is_empty() => Ok(Command::Data),
         "RSET" if args.is_empty() => Ok(Command::Reset),
         "NOOP" => Ok(Command::Noop),
+        "HELP" => Ok(Command::Help),
+        "VRFY" if !args.is_empty() => Ok(Command::Verify),
         "QUIT" if args.is_empty() => Ok(Command::Quit),
         "STARTTLS" if args.is_empty() => Ok(Command::StartTls),
-        "DATA" | "RSET" | "QUIT" | "STARTTLS" => Err(ParseError::Syntax),
+        "DATA" | "RSET" | "QUIT" | "STARTTLS" | "VRFY" => Err(ParseError::Syntax),
         _ => Ok(Command::Unsupported),
     }
 }
@@ -199,6 +223,7 @@ fn parse_path<'a>(args: &'a str, prefix: &str) -> Result<(&'a str, &'a str), Par
 pub struct Envelope {
     pub sender: Option<Address>,
     pub recipients: Vec<Address>,
+    pub body: Body,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -269,15 +294,24 @@ impl Session {
                 Action::Reply(Reply::new(250, "2.0.0 Reset"))
             }
             Command::Noop => Action::Reply(Reply::new(250, "2.0.0 OK")),
+            Command::Help => Action::Reply(Reply::new(
+                214,
+                "2.0.0 EHLO HELO MAIL RCPT DATA RSET NOOP QUIT VRFY HELP STARTTLS",
+            )),
+            // Do not disclose whether an account exists, or modify the envelope.
+            Command::Verify => Action::Reply(Reply::new(252, "2.5.2 Cannot verify user")),
             Command::Quit => Action::Quit,
             Command::StartTls if self.extended => Action::StartTls,
             Command::StartTls => Action::Reply(Reply::new(503, "5.5.1 Send EHLO first")),
             Command::Unsupported => Action::Reply(Reply::new(502, "5.5.1 Command not supported")),
-            Command::Mail { sender, size } => {
+            Command::Mail { sender, size, body } => {
                 // A failed new MAIL must never retain recipients from an older transaction.
                 self.transaction = None;
                 if self.greeting.is_none() {
                     return Action::Reply(Reply::new(503, "5.5.1 Send HELO or EHLO first"));
+                }
+                if !self.extended && (size.is_some() || body.is_some()) {
+                    return Action::Reply(Reply::new(555, "5.5.4 Parameters require EHLO"));
                 }
                 if size.is_some_and(|n| n > self.max_message_bytes) {
                     return Action::Reply(Reply::new(552, "5.3.4 Message too large"));
@@ -285,11 +319,20 @@ impl Session {
                 self.transaction = Some(Envelope {
                     sender,
                     recipients: Vec::new(),
+                    body: body.unwrap_or_default(),
                 });
                 Action::Reply(Reply::new(250, "2.1.0 Sender accepted"))
             }
             Command::Rcpt(address) => match &self.transaction {
                 None => Action::Reply(Reply::new(503, "5.5.1 Send MAIL first")),
+                Some(tx)
+                    if tx
+                        .recipients
+                        .iter()
+                        .any(|old| old.as_str().eq_ignore_ascii_case(address.as_str())) =>
+                {
+                    Action::Reply(Reply::new(250, "2.1.5 Recipient accepted"))
+                }
                 Some(tx) if tx.recipients.len() >= self.max_recipients => {
                     Action::Reply(Reply::new(452, "4.5.3 Too many recipients"))
                 }
@@ -321,7 +364,7 @@ impl Session {
         if !tx
             .recipients
             .iter()
-            .any(|old| old.local_key() == address.local_key())
+            .any(|old| old.as_str().eq_ignore_ascii_case(address.as_str()))
         {
             if tx.recipients.len() >= self.max_recipients {
                 return Reply::new(452, "4.5.3 Too many recipients");
@@ -367,6 +410,191 @@ pub fn decode_data_frame(frame: &[u8]) -> Result<Option<&[u8]>, FrameError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_parameters_preserve_body_and_enforce_size_grammar() {
+        assert!(matches!(
+            parse_command(b"mAiL FROM:<> bOdY=8bitmime SiZe=00000000000000000001"),
+            Ok(Command::Mail {
+                sender: None,
+                size: Some(1),
+                body: Some(Body::EightBitMime)
+            })
+        ));
+        for input in [
+            "MAIL FROM:<> SIZE=000000000000000000000",
+            "MAIL FROM:<> SIZE=+1",
+            "MAIL FROM:<> SIZE=-1",
+            "MAIL FROM:<> SIZE=",
+            "MAIL FROM:<> SIZE=1 SIZE=1",
+            "MAIL FROM:<> BODY=7BIT BODY=8BITMIME",
+        ] {
+            assert_eq!(
+                parse_command(input.as_bytes()),
+                Err(ParseError::Syntax),
+                "{input}"
+            );
+        }
+        for input in [
+            "MAIL FROM:<> BODY=BINARYMIME",
+            "MAIL FROM:<> SMTPUTF8",
+            "MAIL FROM:<> RET=FULL",
+        ] {
+            assert_eq!(
+                parse_command(input.as_bytes()),
+                Err(ParseError::UnsupportedParameter)
+            );
+        }
+        assert!(matches!(
+            parse_command(b"MAIL FROM:<> SIZE=99999999999999999999"),
+            Ok(Command::Mail {
+                size: Some(u64::MAX),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn duplicate_at_recipient_limit_and_information_commands_keep_envelope() {
+        let mut state = Session::new(1024, 1);
+        state.apply(parse_command(b"EHLO client.test").unwrap());
+        state.apply(parse_command(b"MAIL FROM:<> BODY=8BITMIME").unwrap());
+        let address = Address::parse("alice@example.test").unwrap();
+        assert!(matches!(
+            state.apply(Command::Rcpt(address.clone())),
+            Action::CheckRecipient(_)
+        ));
+        state.recipient_result(address, true);
+        for input in [
+            b"RCPT TO:<ALICE@example.test>".as_slice(),
+            b"NOOP anything",
+            b"HELP MAIL",
+            b"VRFY alice",
+        ] {
+            assert!(matches!(
+                state.apply(parse_command(input).unwrap()),
+                Action::Reply(Reply {
+                    code: 200..=299,
+                    ..
+                })
+            ));
+        }
+        assert!(matches!(
+            state.apply(parse_command(b"RCPT TO:<bob@example.test>").unwrap()),
+            Action::Reply(Reply { code: 452, .. })
+        ));
+        let Action::BeginData(envelope) = state.apply(Command::Data) else {
+            panic!("envelope lost");
+        };
+        assert_eq!(envelope.body, Body::EightBitMime);
+        assert_eq!(envelope.recipients.len(), 1);
+    }
+
+    #[test]
+    fn helo_cannot_enable_extensions_or_retain_old_envelope() {
+        let mut state = Session::new(1024, 1);
+        for parameter in ["SIZE=1", "BODY=7BIT", "BODY=8BITMIME"] {
+            state.apply(Command::Helo("client.test".into()));
+            let command = parse_command(format!("MAIL FROM:<> {parameter}").as_bytes()).unwrap();
+            assert!(matches!(
+                state.apply(command),
+                Action::Reply(Reply { code: 555, .. })
+            ));
+            assert!(matches!(
+                state.apply(Command::Data),
+                Action::Reply(Reply { code: 503, .. })
+            ));
+        }
+        state.apply(parse_command(b"MAIL FROM:<>").unwrap());
+        state.recipient_result(Address::parse("alice@example.test").unwrap(), true);
+        let Action::BeginData(envelope) = state.apply(Command::Data) else {
+            panic!("missing DATA");
+        };
+        assert_eq!(envelope.body, Body::SevenBit);
+    }
+
+    #[test]
+    fn generated_state_sequences_never_deliver_without_current_mail_and_recipient() {
+        // Independent three-boolean model over all 7^5 sequences. In particular,
+        // EHLO/RSET/new MAIL/failed MAIL/DATA cannot retain a previous recipient.
+        for sequence in 0usize..7usize.pow(5) {
+            let (mut greeted, mut mail, mut recipient) = (false, false, false);
+            let mut state = Session::new(1024, 1);
+            let mut sequence = sequence;
+            for _ in 0..5 {
+                let step = sequence % 7;
+                sequence /= 7;
+                let command = match step {
+                    0 => "EHLO client.test",
+                    1 => "MAIL FROM:<>",
+                    2 => "MAIL FROM:<> SIZE=1025",
+                    3 => "RCPT TO:<alice@example.test>",
+                    4 => "RSET",
+                    5 => "DATA",
+                    _ => "NOOP",
+                };
+                let expected_data = step == 5 && mail && recipient;
+                let action = state.apply(parse_command(command.as_bytes()).unwrap());
+                assert_eq!(matches!(action, Action::BeginData(_)), expected_data);
+                if let Action::CheckRecipient(address) = action {
+                    assert!(mail);
+                    assert_eq!(state.recipient_result(address, true).code, 250);
+                }
+                match step {
+                    0 => {
+                        greeted = true;
+                        mail = false;
+                        recipient = false;
+                    }
+                    1 => {
+                        mail = greeted;
+                        recipient = false;
+                    }
+                    2 | 4 => {
+                        mail = false;
+                        recipient = false;
+                    }
+                    3 if mail => recipient = true,
+                    5 if expected_data => {
+                        mail = false;
+                        recipient = false;
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_and_limit_frames_are_invariant_under_every_single_split() {
+        let mut corpus = vec![
+            b"a\nb\r\n".to_vec(),
+            b"a\rb\r\n".to_vec(),
+            b"\0\r\n".to_vec(),
+            b".\r\nNOOP\r\n".to_vec(),
+        ];
+        for length in [509, 510, 511, 535, 536, 537, 998, 999, 1000] {
+            let mut bytes = vec![b'x'; length];
+            bytes.extend_from_slice(b"\r\n");
+            corpus.push(bytes);
+        }
+        for limit in [512, 538, 1001] {
+            for wire in &corpus {
+                let expected = LineDecoder::new(limit).feed(wire);
+                for split in 0..=wire.len() {
+                    let mut decoder = LineDecoder::new(limit);
+                    let actual = match decoder.feed(&wire[..split]) {
+                        Ok((used, None)) => decoder
+                            .feed(&wire[split..])
+                            .map(|(more, line)| (used + more, line)),
+                        result => result,
+                    };
+                    assert_eq!(actual, expected);
+                    assert!(decoder.buffered_bytes() <= limit);
+                }
+            }
+        }
+    }
 
     #[test]
     fn borrowed_frames_preserve_chunk_boundaries_transparency_and_limits() {
@@ -461,7 +689,7 @@ mod tests {
     #[test]
     fn rejects_parameters_and_numeric_overflow() {
         for bytes in [
-            b"MAIL FROM:<a@b> SIZE=18446744073709551616".as_slice(),
+            b"MAIL FROM:<a@b> SIZE=000000000000000000000".as_slice(),
             b"MAIL FROM:<a@b> SIZE=1 SIZE=2",
             b"MAIL FROM:<a@b> SMTPUTF8",
             b"RCPT TO:<a@b> ORCPT=x",
@@ -474,7 +702,8 @@ mod tests {
             parse_command(b"MAIL FROM:<> SIZE=0"),
             Ok(Command::Mail {
                 sender: None,
-                size: Some(0)
+                size: Some(0),
+                body: None
             })
         ));
     }
@@ -490,11 +719,13 @@ mod tests {
         state.apply(Command::Mail {
             sender: None,
             size: None,
+            body: None,
         });
         state.recipient_result(Address::parse("a@b").unwrap(), true);
         state.apply(Command::Mail {
             sender: None,
             size: Some(1025),
+            body: None,
         });
         assert!(matches!(
             state.apply(Command::Data),
@@ -503,6 +734,7 @@ mod tests {
         state.apply(Command::Mail {
             sender: None,
             size: None,
+            body: None,
         });
         state.recipient_result(Address::parse("a@b").unwrap(), true);
         state.apply(Command::Reset);
@@ -519,6 +751,7 @@ mod tests {
         state.apply(Command::Mail {
             sender: None,
             size: None,
+            body: None,
         });
         assert_eq!(
             state
@@ -559,6 +792,7 @@ mod tests {
         state.apply(Command::Mail {
             sender: None,
             size: None,
+            body: None,
         });
         state.recipient_result(Address::parse("a@b").unwrap(), true);
         assert!(!state.authentication_allowed());

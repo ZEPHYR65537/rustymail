@@ -17,7 +17,7 @@ def main():
     message["Subject"] = "rustymail: first local message"
     message.set_content("Hello, rustymail!\n这是本地合成测试邮件。\n.leading dot\n")
     with smtplib.SMTP("127.0.0.1", args.port, timeout=30) as client:
-        refused = client.send_message(message)
+        refused = client.send_message(message, mail_options=['BODY=8BITMIME'])
         if refused:
             raise RuntimeError(f"Recipients refused: {refused}")
     print("SMTP final 250 received; stop the lab server before listing/exporting mail.")

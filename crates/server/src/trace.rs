@@ -75,7 +75,8 @@ impl HeaderFilter {
         let content = line
             .strip_suffix(b"\r\n")
             .ok_or(ServerError::InvalidHeaders)?;
-        if content.iter().any(|b| b.is_ascii_control() && *b != b'\t') {
+        // 8BITMIME permits high-bit body bytes, not SMTPUTF8 message headers.
+        if !content.is_ascii() || content.iter().any(|b| b.is_ascii_control() && *b != b'\t') {
             return Err(ServerError::InvalidHeaders);
         }
         if content.first().is_some_and(|b| matches!(b, b' ' | b'\t')) {
