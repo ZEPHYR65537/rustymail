@@ -1,0 +1,81 @@
+{
+  "code_revision": "c32e2328180103bb8e959662f4e5e203c10a1364",
+  "ci_run": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35603944609",
+  "artifacts": [
+    {
+      "id": 10641547210,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "320d9b0cac1508c25fc626b3644ee5f9d050899cc4578177c2ad1b5caa814753",
+      "member": "benchmark.json",
+      "archived_as": "linux-benchmark.json",
+      "transformation": "none",
+      "archived_sha256": "92aad69fb9ab35d73ea0812ef42dc24542e2a49dae76c83a09d39ea85339fa30"
+    },
+    {
+      "id": 10641547210,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "320d9b0cac1508c25fc626b3644ee5f9d050899cc4578177c2ad1b5caa814753",
+      "member": "framing.json",
+      "archived_as": "linux-framing.json",
+      "transformation": "none",
+      "archived_sha256": "e65374c43af51275f114995384ba47e3072cea366544cd4868acc636ef2e72d5"
+    },
+    {
+      "id": 10641547210,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "320d9b0cac1508c25fc626b3644ee5f9d050899cc4578177c2ad1b5caa814753",
+      "member": "powercut.json",
+      "archived_as": "storage-regression.json",
+      "transformation": "none",
+      "archived_sha256": "64928991a14fd706638a410167e989897d61374bcb7db2efe288938a55980e65"
+    },
+    {
+      "id": 10641440740,
+      "name": "m2-protocol-ubuntu-24.04",
+      "zip_sha256": "4f99d70443710b5d1f0867b56f013d7596e358c6f7752b4218282b93da1b0501",
+      "member": "m2-smoke.json",
+      "archived_as": "linux-protocol.json",
+      "transformation": "none",
+      "archived_sha256": "8351263ae7ac6c8bad5d12e53236e1618821c26ace802d36632a21487aa2ad91"
+    },
+    {
+      "id": 10641416147,
+      "name": "m2-protocol-windows-latest",
+      "zip_sha256": "9e16abf2f3b5394a3ced67d79a6854b727d8b33c5d368dc3cbdc117528caa864",
+      "member": "m2-smoke.json",
+      "archived_as": "windows-protocol.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "1615c6032ab16b237c9d2efdf847f3c213e41503d7e664a83724f3dec563ca2b"
+    }
+  ],
+  "production_ready": false,
+  "jobs": [
+    {
+      "id": 106346393403,
+      "name": "test (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35603944609/job/106346393403",
+      "log_sha256": "bb9df5e1ad79f145d8a91fa8e0a58e64543d99a6141194e260170c12d3d0f58b",
+      "rust_tests_passed": 53
+    },
+    {
+      "id": 106346393760,
+      "name": "test (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35603944609/job/106346393760",
+      "log_sha256": "47a8eb7c25b201cf52537db8ef8e10b8219b0fceb5b43cd1723d566530451115",
+      "rust_tests_passed": 49
+    },
+    {
+      "id": 106347863570,
+      "name": "linux-storage-labs",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35603944609/job/106347863570",
+      "log_sha256": "6ff88dd7b506a034c983118189b3975603f033ad81ff36dab3b1a6ca4fd3eb7f"
+    }
+  ],
+  "conclusion": "success"
+}

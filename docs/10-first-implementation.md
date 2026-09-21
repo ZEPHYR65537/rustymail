@@ -63,7 +63,7 @@ SMTP 命令行预算是 512 字节，DATA 解码后单行预算是 1000 字节�
 线上：text\n              → 非法 framing，关闭连接
 ```
 
-为什么不简单调用无限制的 `read_line`？攻击者可以一直不发送换行，迫使应用增长缓冲。本实现的上界由协议行预算决定；总消息体则逐行进入 16 KiB 文件缓冲，不收集为 25 MiB 的完整 `Vec`。这不意味着整个进程只占 16 KiB：还有网络缓冲、Tokio 文件缓冲、任务、连接表、SQLite 缓存和运行时开销。
+为什么不简单调用无限制的 `read_line`？攻击者可以一直不发送换行，迫使应用增长缓冲。本实现的上界由协议行预算决定；总消息体则逐行进入 16 KiB 文件缓冲，不收集为 25 MiB 的完整 `Vec`。这不意味着整个进程只占 16 KiB：还有网络缓冲、任务、连接表、SQLite 缓存和运行时开销。早期 Tokio 文件层还有自己的缓冲；0.3.1 已改成显式移交固定写入缓冲。
 
 实验：
 
@@ -170,7 +170,7 @@ cargo test -p rustymail-store reservations_and_instance_lock_live_until_prepared
 cargo test -p rustymail-store cancelling_a_pending_append_poisoned_the_stage
 ```
 
-还要注意另一层缓冲：第一次小块 Tokio 文件写入可能只是复制进内部缓冲就返回成功，并没有等待系统写盘。测试不能根据“小块 write 返回成功”判断磁盘工作结束；生产 prepare 必须 flush、sync，并等待文件操作完成。代码显式限制了 Tokio 文件缓冲与外层 BufWriter 的大小。
+早期实现还遇到另一层缓冲：第一次小块 Tokio 文件写入可能只复制进内部缓冲就返回成功，没有等待系统写盘。限制 Tokio 缓冲与外层 BufWriter 的大小仍不足以保证取消后的额度和实例锁生命周期。0.3.1 将这条路径替换成显式阻塞工作：写入、清理及已准备凭证共同持有资源，真正完成后再释放额度。prepare 仍等待所有写入、文件同步和目录同步，详见[取消修复教程](13-cancellation-and-bounds.md)。
 
 练习：`timeout(store.accept(...))` 超时后，写线程是否停止？找到 worker 中 `Request::Accept` 的处理顺序，解释为什么不能把客户端等待结束当作数据库事务撤销。
 

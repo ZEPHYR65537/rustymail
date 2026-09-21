@@ -1,0 +1,23 @@
+{
+  "revision": "c32e2328180103bb8e959662f4e5e203c10a1364",
+  "working_tree_dirty": false,
+  "platform": "posix",
+  "openssl": "OpenSSL 3.0.13 30 Jan 2024",
+  "checks": [
+    "offline credential lifecycle and private one-time output",
+    "unknown CA, wrong hostname and stalled TLS handshake rejected",
+    "AUTH required, wrong and unknown credentials return the same failure, authzid denied",
+    "authorized local delivery; envelope, From, Sender, Resent, duplicate/folded identity negatives",
+    "100-entry credential page with maximum escaped labels crosses Unix management transport",
+    "different Unix UID denied even with permissive test filesystem access",
+    "online credential creation, in-flight DATA revocation and account disable",
+    "TLS reload preserves old config on failure and existing connections on success",
+    "expired and wrong-name server certificates rejected by verified client",
+    "minimum TLS version enforced",
+    "only authorized message persisted; export byte-exact after restart",
+    "logs contain no application passwords, AUTH payloads, PHC or mail body"
+  ],
+  "online_admin_tested": true,
+  "different_uid_tested": true,
+  "production_ready": false
+}

@@ -1,6 +1,6 @@
 # M2：TLS、身份、授权与本地管理
 
-本章对应 0.3.0。代码继续运行在 L0 环回实验环境，提供隐式 TLS、AUTH PLAIN、应用密码、send-as、撤销、Unix 管理 socket 和证书重载。验收状态见 [M2 报告](../reports/m2/validation.md)。完整公网 SMTP 属于 M3，IMAP 属于 M5；本阶段不开放外域投递或生产启动入口。
+本章基于 0.3.0，并补充 0.3.1 的资源与取消修复。代码继续运行在 L0 环回实验环境，提供隐式 TLS、AUTH PLAIN、应用密码、send-as、撤销、Unix 管理 socket 和证书重载。原始阶段验收见 [M2 报告](../reports/m2/validation.md)。完整公网 SMTP 属于 M3，IMAP 属于 M5；本阶段不开放外域投递或生产启动入口。
 
 ## 1. 用成熟组件承担它们擅长的责任
 

@@ -1,0 +1,14 @@
+{"kind":"isolated_framing_current_apis","samples":[
+{"line_bytes":2,"lines":8388608,"round":0,"owned_ns":298404093,"borrowed_ns":96603161}
+,{"line_bytes":2,"lines":8388608,"round":1,"owned_ns":298474218,"borrowed_ns":96443622}
+,{"line_bytes":2,"lines":8388608,"round":2,"owned_ns":298316652,"borrowed_ns":96553849}
+,{"line_bytes":2,"lines":8388608,"round":3,"owned_ns":298472184,"borrowed_ns":96564849}
+,{"line_bytes":80,"lines":209715,"round":0,"owned_ns":35453016,"borrowed_ns":32079235}
+,{"line_bytes":80,"lines":209715,"round":1,"owned_ns":35467533,"borrowed_ns":32205352}
+,{"line_bytes":80,"lines":209715,"round":2,"owned_ns":35347328,"borrowed_ns":31250105}
+,{"line_bytes":80,"lines":209715,"round":3,"owned_ns":36256598,"borrowed_ns":32272167}
+,{"line_bytes":1000,"lines":16777,"round":0,"owned_ns":28941828,"borrowed_ns":29948931}
+,{"line_bytes":1000,"lines":16777,"round":1,"owned_ns":28656064,"borrowed_ns":29973748}
+,{"line_bytes":1000,"lines":16777,"round":2,"owned_ns":28884310,"borrowed_ns":29932851}
+,{"line_bytes":1000,"lines":16777,"round":3,"owned_ns":28529577,"borrowed_ns":30041405}
+]}
