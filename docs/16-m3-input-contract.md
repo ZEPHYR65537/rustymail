@@ -138,7 +138,7 @@ python scripts/smtp_pressure.py
 python scripts/check_docs.py
 ```
 
-原始输出写入 `reports/local`，包含代码版本、工作区是否有修改、平台、逐项结果和资源数据。Windows 可以跑压力行为，但不声明获得 Linux RSS/FD 证据；Linux CI 使用 release。归档数据及实际结论见[本阶段验证记录](../reports/m3.3/validation.md)。延迟测量包含容量重试，复用已认证的连接；认证成本在总实验时间和进程峰值内，不能将该延迟当成每封都重新认证的成本。
+原始输出写入 `reports/local`，包含代码版本、工作区是否有修改、平台、逐项结果和资源数据。Windows 可以跑压力行为，但不声明获得 Linux RSS/FD 证据；Linux CI 使用 release。归档数据及实际结论见[本阶段验证记录](../reports/m3.3/validation.md)。每封延迟包含容量重试，复用已认证的连接；P04 的 `wall_seconds` 另包含连接与两次认证，不包含启动及 P01–P03。VmHWM 覆盖整个进程生命周期。不能将每封延迟当成每封都重新认证的成本。
 
 ## 7. 仍须保留的兼容性和生产门槛
 

@@ -1,0 +1,144 @@
+{
+  "code_revision": "6f84af516510174649c06fb0990f573a12b6c1fe",
+  "ci_run": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35617540710",
+  "artifacts": [
+    {
+      "id": 10647800624,
+      "name": "m33-contract-ubuntu-24.04",
+      "zip_sha256": "133dc8261ecf3071a2c399911a873e6c4b82974060571cf3fc0d86589b3440b1",
+      "member": "m33-smoke.json",
+      "archived_as": "linux-contract.json",
+      "transformation": "none",
+      "archived_sha256": "6f4c609da848e16c31fe5bd70bcb0d700c09eadca8d93f77e0de18a4a43a661f"
+    },
+    {
+      "id": 10647790544,
+      "name": "m32-delivery-ubuntu-24.04",
+      "zip_sha256": "7d7943c1ec34daee5f18255f9f1b7556dc41a09c53202b6fe4f5a224478ddd50",
+      "member": "m32-smoke.json",
+      "archived_as": "linux-delivery.json",
+      "transformation": "none",
+      "archived_sha256": "6efd4eb2bd546352d4b81af1ff05fb18c7cb1c0d3cd42f1fb4a179372a7c6231"
+    },
+    {
+      "id": 10647705761,
+      "name": "m3-protocol-ubuntu-24.04",
+      "zip_sha256": "bc607da0e075681a478586dfa2dbd9762e40e9b5f9db2c03f9441af97f903119",
+      "member": "m3-smoke.json",
+      "archived_as": "linux-protocol.json",
+      "transformation": "none",
+      "archived_sha256": "1ec1abfbbade72ea4491da1cf1b348ae2b786041dd98c5a45bd9807f548cf821"
+    },
+    {
+      "id": 10647610946,
+      "name": "m2-protocol-windows-latest",
+      "zip_sha256": "b8a44f54fbe68f041bfc4aa8db90311160ebcc094b2f1eee471ef1fd0802e1e4",
+      "member": "m2-smoke.json",
+      "archived_as": "windows-m2-regression.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "26d81afa619e8139f8413fab1d2eacf1c4173961e63f93369c7a9d044a1c3bb2"
+    },
+    {
+      "id": 10647582223,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "446ca7349e7f0cef9fafd78c1fe1472582b06ee2891f8f69d9a4a8bd688db9fa",
+      "member": "benchmark.json",
+      "archived_as": "linux-benchmark.json",
+      "transformation": "none",
+      "archived_sha256": "78031ca447b525e5c6b3dbd5ec225655773ec4c84cb3a27f8ba3dd5f6fe9eacf"
+    },
+    {
+      "id": 10647582223,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "446ca7349e7f0cef9fafd78c1fe1472582b06ee2891f8f69d9a4a8bd688db9fa",
+      "member": "framing.json",
+      "archived_as": "linux-framing.json",
+      "transformation": "none",
+      "archived_sha256": "733ab3bba52b8ccfcfafc4440b4819c9ef3ed35fe2e2f459851a93f50b0e7a6f"
+    },
+    {
+      "id": 10647582223,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "446ca7349e7f0cef9fafd78c1fe1472582b06ee2891f8f69d9a4a8bd688db9fa",
+      "member": "powercut.json",
+      "archived_as": "storage-regression.json",
+      "transformation": "none",
+      "archived_sha256": "0cb8924f314c62fb0174c4a496569df5ea366628543f77c6788c4d24c0276f03"
+    },
+    {
+      "id": 10647582223,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "446ca7349e7f0cef9fafd78c1fe1472582b06ee2891f8f69d9a4a8bd688db9fa",
+      "member": "smtp-pressure.json",
+      "archived_as": "linux-pressure.json",
+      "transformation": "none",
+      "archived_sha256": "9b6fccf53c1aa0e1143b8706990f21895e3c4bcf4e676b04a81c62b68a27c4ad"
+    },
+    {
+      "id": 10647576227,
+      "name": "m3-protocol-windows-latest",
+      "zip_sha256": "d486608bf3d001ac2de11f0f732f13dd2e83da7419eb191460a351a496bd96ea",
+      "member": "m3-smoke.json",
+      "archived_as": "windows-protocol.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "27654e21d768686bf7e39675285fdefe239e8e49e25d2b7ed2389bc7ae766822"
+    },
+    {
+      "id": 10647461195,
+      "name": "m32-delivery-windows-latest",
+      "zip_sha256": "9a92d7a8eaa89f19d7253eeb44c312c3eb7edd93d5f75b4e17b32bfd92d9798f",
+      "member": "m32-smoke.json",
+      "archived_as": "windows-delivery.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "3f0939d38c2ffdae2c65ff5a11aa1e23cc36affcbc6aa13b97e64c30254ea0a5"
+    },
+    {
+      "id": 10647296470,
+      "name": "m33-contract-windows-latest",
+      "zip_sha256": "88b671dd5d9c5ba6ff7c645e1a6b7d21a3976cc4e0fc926dfd2261a694b7d109",
+      "member": "m33-smoke.json",
+      "archived_as": "windows-contract.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "ed64e7087b0f3ca2b0feeebd380a48fd872987ae1389514e099fa230ee067f5d"
+    },
+    {
+      "id": 10646985982,
+      "name": "m2-protocol-ubuntu-24.04",
+      "zip_sha256": "bd4c17bd80ddb5c9a29de35c13dee682af3a7305f00f9491e7cd3b2361f03438",
+      "member": "m2-smoke.json",
+      "archived_as": "linux-m2-regression.json",
+      "transformation": "none",
+      "archived_sha256": "219ca374f637276652d171434bd884f49e64035554bb9b622d0f1762a9497527"
+    }
+  ],
+  "production_ready": false,
+  "jobs": [
+    {
+      "id": 106392016206,
+      "name": "test (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35617540710/job/106392016206",
+      "log_sha256": "dab94bbffa2c322fe5ab4d8e09567cf534bd8b49b94b45de924edfa368196f8a",
+      "rust_tests_passed": 65
+    },
+    {
+      "id": 106392016548,
+      "name": "test (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35617540710/job/106392016548",
+      "log_sha256": "72df7c912d6dc7f24307fe2e5850089a4782a6797b46f2f6e653fd901fc77ae4",
+      "rust_tests_passed": 61
+    },
+    {
+      "id": 106393779816,
+      "name": "linux-storage-labs",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35617540710/job/106393779816",
+      "log_sha256": "e3abc232948344d4a76e2484b54e44436310b54326a4a97c778a991bd8d67d1a"
+    }
+  ],
+  "conclusion": "success"
+}

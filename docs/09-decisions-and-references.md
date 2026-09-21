@@ -19,6 +19,7 @@
 | 011 | 有界 SASL + 预检 PHC 的 Argon2 在进程内 blocking 任务执行，permit 跟随真实计算生命周期 | 独立认证进程可进一步隔离故障，但增加 IPC 和秘密传输路径；默认先限制两路各 64 MiB | 需要独立认证故障隔离，或实际分配/CPU 上界不再可控；MIME worker 仍独立验证 |
 | 012 | 三个 SMTP 入口共享存储与准入；STARTTLS 丢弃明文预读、重建会话，失败关闭 | 每端口独立进程便于隔离但会改变单 owner 和全局预算；复用旧读缓冲会跨越信任边界 | 需要按入口隔离进程时，先重新设计预算与授权协议；见 [M3.1 教程](14-m3-starttls.md) |
 | 013 | 在一个 staging 流中构造本地交付表示；SIZE 与最终配额分开，额外预约 2 KiB；幂等匹配最终字节 | 保存输入/输出双副本便于未来扫描，但增加临时磁盘与恢复状态；当前避免全量重写 | M4 中继与 M6 签名验证接入前重新设计变体及变换时机；见 [M3.2 教程](15-m3-local-delivery.md) |
+| 014 | BODY 随信封传播；严格拒绝未声明的高位 DATA，头部在未支持 SMTPUTF8 时为 ASCII；非法 DATA 分类回复后关闭 | 容忍未声明 8-bit 可接纳更多旧客户端，但需要另定义出站编码责任；丢弃至结束点可保留连接，却增加攻击输入的时间/字节预算 | M4 出站能力协商、实际客户端互通或 SMTPUTF8 接入时复评，不能默认改写已接受字节；见 [M3.3 契约](16-m3-input-contract.md) |
 
 ## 2. 规范资料：读哪些、用在哪里
 
@@ -28,6 +29,10 @@
 | --- | --- |
 | [RFC 5321 SMTP](https://www.rfc-editor.org/rfc/rfc5321.html) | 信封、接收责任、重试和 SMTP 对端行为 |
 | [RFC 5322 消息格式](https://www.rfc-editor.org/rfc/rfc5322.html) | 头部与作者字段；与信封严格区分 |
+| [RFC 1870 SIZE](https://www.rfc-editor.org/rfc/rfc1870.html) | 声明值、数字语法、MAIL 长度扩展与实际内容计数 |
+| [RFC 6152 8BITMIME](https://www.rfc-editor.org/rfc/rfc6152.html) | BODY 协商、高位字节保留与行限制 |
+| [RFC 2034 增强状态码](https://www.rfc-editor.org/rfc/rfc2034.html) | 回复类别和问候/EHLO 例外 |
+| [RFC 6531 SMTPUTF8](https://www.rfc-editor.org/rfc/rfc6531.html) | 首发不支持的国际化信封与 UTF-8 头部边界 |
 | [RFC 3207 STARTTLS](https://www.rfc-editor.org/rfc/rfc3207) | 升级后的状态重置和缓冲安全 |
 | [RFC 4954 SMTP AUTH](https://www.rfc-editor.org/rfc/rfc4954) | 认证能力、会话语义与错误处理 |
 | [RFC 2920 PIPELINING](https://www.rfc-editor.org/rfc/rfc2920) | 多命令批发送、响应顺序和边界 |
