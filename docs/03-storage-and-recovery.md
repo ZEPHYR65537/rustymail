@@ -21,7 +21,7 @@
 
 ## 2. 数据模型
 
-[schema.sql](examples/schema.sql) 是可供 SQLite 执行的结构草案；L0 已将其转换为[首个迁移](../crates/store/migrations/0001.sql)，使用 `PRAGMA user_version=1` 跟踪版本，实现了账号、本地接受、配额与原文检查。队列、IMAP、GC 等业务仍未实现；下文继续定义完整目标。核心关系如下：
+[schema.sql](examples/schema.sql) 是可供 SQLite 执行的结构草案；L0 已将其转换为[首个迁移](../crates/store/migrations/0001.sql)。0.2.0 使用 `PRAGMA user_version=2`，加入迁移摘要、维护执行和 GC 动作记录，实现账号、本地接受、配额、原文检查、离线 orphan GC 和精确副本恢复，操作见 [M1 教程](11-m1-storage.md)。队列执行、IMAP 和已接受消息的历史过期尚未实现；下文继续定义完整目标。核心关系如下：
 
 | 对象 | 唯一性 / 约束 | 用途 |
 | --- | --- | --- |

@@ -340,6 +340,10 @@ async fn recovery_accepts_only_a_matching_copy_and_never_overwrites() {
     ));
     assert!(!path.exists());
     fs::write(&source, RAW).unwrap();
+    drop(store);
+    let mut smaller_limit = options();
+    smaller_limit.max_message_bytes = 1;
+    let mut store = Store::open_existing(&root, smaller_limit).unwrap();
     assert_eq!(
         store.recover_blob(&accepted.blob_id, &source).unwrap(),
         RAW.len() as u64

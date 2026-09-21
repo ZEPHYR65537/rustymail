@@ -48,6 +48,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends qemu-system-x86 busybox-static linux-image-virtual musl-tools zstd kmod e2fsprogs
+          mkdir -p "$RUNNER_TEMP/rustymail-kernels"
+          for kernel in /boot/vmlinuz-*; do
+            sudo install -m 0644 "$kernel" "$RUNNER_TEMP/rustymail-kernels/"
+          done
       - name: Build native optimized server
         run: cargo build --workspace --release --locked
       - name: Measure native SMTP latency and daemon memory
@@ -59,7 +63,7 @@ jobs:
           cargo build --workspace --release --locked --target x86_64-unknown-linux-musl
           cargo build -p rustymail-store --example m1_probe --features test-support --release --locked --target x86_64-unknown-linux-musl
       - name: VM power cuts and real filesystem exhaustion
-        run: python scripts/powercut.py
+        run: python scripts/powercut.py --kernel-dir "$RUNNER_TEMP/rustymail-kernels"
       - name: Preserve raw laboratory evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

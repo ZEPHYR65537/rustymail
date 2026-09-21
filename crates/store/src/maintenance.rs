@@ -261,9 +261,8 @@ impl Store {
             )
             .optional()?;
         let (size, digest) = expected.ok_or(StoreError::NotFound)?;
-        if size > self.options.max_message_bytes {
-            return Err(StoreError::SizeLimit);
-        }
+        // Existing responsibility survives later reductions of the ingress
+        // size limit. Bound recovery by the recorded length and digest instead.
         let source = source.as_ref();
         reject_symlink(source)?;
         if !fs::metadata(source)?.is_file() {

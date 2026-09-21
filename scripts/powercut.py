@@ -52,7 +52,7 @@ def make_initrd(binary_directory, kernel, destination):
                for name in ["bin", "dev", "proc", "sys", "data", "modules", "tmp"]]
     entries.append(("dev/console", stat.S_IFCHR | 0o600, b"", 5, 1))
     entries.append(("bin/busybox", stat.S_IFREG | 0o755, Path(shutil.which("busybox")).read_bytes(), 0, 0))
-    for applet in ["sh", "mount", "mkdir", "insmod", "cat", "sleep", "poweroff", "kill"]:
+    for applet in ["sh", "mount", "mkdir", "insmod", "cat", "sleep", "poweroff", "kill", "ip"]:
         entries.append((f"bin/{applet}", stat.S_IFLNK | 0o777, b"busybox", 0, 0))
     modules = []
     for driver in ["virtio_pci", "virtio_blk", "virtio_rng", "ext4"]:
@@ -85,6 +85,7 @@ export PATH=/bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
+ip link set lo up
 MODE=verify
 POINT=unknown
 for arg in $(cat /proc/cmdline); do
@@ -173,6 +174,7 @@ def boot(kernel, initrd, disk, mode, point, marker, log_file):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", default="target/x86_64-unknown-linux-musl/release")
+    parser.add_argument("--kernel-dir", default="/boot", help="readable vmlinuz-* images with matching installed modules")
     parser.add_argument("--output", default="reports/local/powercut.json")
     args = parser.parse_args()
     if sys.platform != "linux":
@@ -180,7 +182,7 @@ def main():
     binary_directory = Path(args.bin_dir).resolve()
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    kernels = [p for p in Path("/boot").glob("vmlinuz-*") if (Path("/lib/modules") / p.name.removeprefix("vmlinuz-") / "modules.dep").is_file()]
+    kernels = [p for p in Path(args.kernel_dir).glob("vmlinuz-*") if (Path("/lib/modules") / p.name.removeprefix("vmlinuz-") / "modules.dep").is_file()]
     if not kernels:
         raise SystemExit("Install a Linux kernel with matching modules first")
     kernel = max(kernels, key=lambda p: p.stat().st_mtime)
