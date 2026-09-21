@@ -25,6 +25,7 @@ connections = 256
 connections_per_ip = 8
 imap_sessions_per_account = 8
 tls_handshakes = 16
+# Decoded client bytes; generated local trace fields have a separate 2 KiB bound.
 message_bytes = 26214400
 header_bytes = 262144
 recipients_per_message = 100
@@ -35,6 +36,7 @@ selected_mailbox_messages = 100000
 imap_event_bytes_per_session = 65536
 disk_reserve_bytes = 2147483648
 disk_reserve_percent = 10
+# 400 MiB fits 15 reservations of (message_bytes + 2048), capped by ingest_concurrency.
 temporary_reserved_bytes = 419430400
 
 [timeouts]

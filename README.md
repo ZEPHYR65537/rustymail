@@ -87,6 +87,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [M1 验证报告](reports/m1/validation.md) | 0.2.0 的迁移、维护、Linux VM 故障与性能原始数据 |
 | [M2 验证报告](reports/m2/validation.md) | 0.3.0 的 TLS、身份、Unix 管理证据及依赖审计 |
 | [M3.1 验证报告](reports/m3.1/validation.md) | 0.4.0 的三入口与 STARTTLS、两平台协议及 Linux 存储故障回归 |
+| [M3.2 验证报告](reports/m3.2/validation.md) | 0.5.0 的交付头部、大小/配额、共享/重放、存储故障及匿名性能数据 |
 | [验证记录](docs/validation.md) | 设计阶段的历史静态检查，以及各阶段验证报告入口 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。

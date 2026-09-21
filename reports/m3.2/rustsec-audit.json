@@ -1,0 +1,38 @@
+{
+  "database": {
+    "advisory-count": 1256,
+    "last-commit": null,
+    "last-updated": null
+  },
+  "lockfile": {
+    "dependency-count": 157
+  },
+  "settings": {
+    "target_arch": [],
+    "target_os": [],
+    "severity": null,
+    "ignore": [],
+    "informational_warnings": [
+      "unmaintained",
+      "unsound",
+      "notice"
+    ]
+  },
+  "vulnerabilities": {
+    "found": false,
+    "count": 0,
+    "list": []
+  },
+  "warnings": {},
+  "provenance": {
+    "code_revision": "fa99159d8fadcb1b77911bd370bd86d36d51b65a",
+    "cargo_lock_sha256": "d6a1d6e2ca2b8281a55ccb96d08a290fe9981698b4c7745cf1b98640ed0bae59",
+    "cargo_audit_version": "0.22.2",
+    "advisory_db_commit": "bd8037e5cbb8d8cc687c68cdd42ca53d742503fb",
+    "options": [
+      "--no-fetch",
+      "--no-yanked"
+    ],
+    "limitations": "Existing advisory snapshot; no yanked-version check or full source audit. Third-party package versions unchanged; existing time 0.3.55 is now a direct runtime dependency with formatting."
+  }
+}

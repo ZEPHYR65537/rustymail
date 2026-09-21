@@ -1,0 +1,117 @@
+{
+  "code_revision": "fa99159d8fadcb1b77911bd370bd86d36d51b65a",
+  "ci_run": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35612847184",
+  "artifacts": [
+    {
+      "id": 10645277457,
+      "name": "m2-protocol-windows-latest",
+      "zip_sha256": "c647bd25fac28265973e6b057679bf06153591991cfe2c43e46ec91652b98224",
+      "member": "m2-smoke.json",
+      "archived_as": "windows-m2-regression.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "ca1943582f79f1de0cc8e04b589a2891c182e37d4ef7cbdf84e02f1b72def431"
+    },
+    {
+      "id": 10645277114,
+      "name": "m3-protocol-ubuntu-24.04",
+      "zip_sha256": "e01d7238451d0de4fb1855ad03e061e87c569a6910784d1141071aa3eb4bfde2",
+      "member": "m3-smoke.json",
+      "archived_as": "linux-protocol.json",
+      "transformation": "none",
+      "archived_sha256": "fef596612475fe83db7cecafe13d8be09915d96690e5b1259d718bf6135cd0c1"
+    },
+    {
+      "id": 10645092611,
+      "name": "m32-delivery-ubuntu-24.04",
+      "zip_sha256": "6384d3e0d8291d103021e3f6d6cd79be2ca9c4bf54c6a1d143dfc8a479a3ac74",
+      "member": "m32-smoke.json",
+      "archived_as": "linux-delivery.json",
+      "transformation": "none",
+      "archived_sha256": "09d2d2850d2a2e0bffc2771358ec561b92692aeff868b4611aa458daec9cdd86"
+    },
+    {
+      "id": 10645044037,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "76cfcb87fa0eb7b0882a7c22c1f1fc37ad640821f00c75a13ce5da1c3865459e",
+      "member": "benchmark.json",
+      "archived_as": "linux-benchmark.json",
+      "transformation": "none",
+      "archived_sha256": "3017aeff31b356d902e94ee3ab320bceaa88fcc030ac17bbf54b21f89ee9d966"
+    },
+    {
+      "id": 10645044037,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "76cfcb87fa0eb7b0882a7c22c1f1fc37ad640821f00c75a13ce5da1c3865459e",
+      "member": "framing.json",
+      "archived_as": "linux-framing.json",
+      "transformation": "none",
+      "archived_sha256": "3eaecf6642c8595a569e2bde4a6878a6b86b4e24388aaa8f86c20b4b5627aea2"
+    },
+    {
+      "id": 10645044037,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "76cfcb87fa0eb7b0882a7c22c1f1fc37ad640821f00c75a13ce5da1c3865459e",
+      "member": "powercut.json",
+      "archived_as": "storage-regression.json",
+      "transformation": "none",
+      "archived_sha256": "def9fd78cea8e9ecf584480c9fc83a5904b1fb5a858415b932abdc583bb57a43"
+    },
+    {
+      "id": 10644757766,
+      "name": "m2-protocol-ubuntu-24.04",
+      "zip_sha256": "a25e4ad7a1180078a28ba7543202fd301dd9e2f2b1d2b304b459ccf1d0d82843",
+      "member": "m2-smoke.json",
+      "archived_as": "linux-m2-regression.json",
+      "transformation": "none",
+      "archived_sha256": "65472c4c28b716417046646ec80203e5e868d71abbf4ae2ef7a10a4f12a0e1c3"
+    },
+    {
+      "id": 10644199923,
+      "name": "m32-delivery-windows-latest",
+      "zip_sha256": "2363341dc77de3382e57f97d2fcf60d95dc313a7b9f1ba0f715aac9dec45ebc9",
+      "member": "m32-smoke.json",
+      "archived_as": "windows-delivery.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "47a2eb949e6bee60332c5e3ea5141b90e3fd72de5c24f1cb90545349d1133262"
+    },
+    {
+      "id": 10644079835,
+      "name": "m3-protocol-windows-latest",
+      "zip_sha256": "324c7ddd5add9bb268b00c05ca3749b12270e6d1a550bafa81324979fbd9b5d4",
+      "member": "m3-smoke.json",
+      "archived_as": "windows-protocol.json",
+      "transformation": "normalize CRCRLF/CRLF to LF; JSON values unchanged",
+      "archived_sha256": "5c65d038b0b4174d4f30aee7970d3b07ffaaf94687fd0bd85e194143bf718433"
+    }
+  ],
+  "production_ready": false,
+  "jobs": [
+    {
+      "id": 106376108161,
+      "name": "test (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35612847184/job/106376108161",
+      "log_sha256": "503eb0076d3495a7c2ce8e60b8da290d93c26c7dbc3fe20492b4423b97a0fa5d",
+      "rust_tests_passed": 56
+    },
+    {
+      "id": 106376108466,
+      "name": "test (ubuntu-24.04)",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35612847184/job/106376108466",
+      "log_sha256": "2089e3d0cda0b3d77ed08e1f1b9b6a0f33b85cddb93698fe6224a5901642851a",
+      "rust_tests_passed": 60
+    },
+    {
+      "id": 106377957125,
+      "name": "linux-storage-labs",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35612847184/job/106377957125",
+      "log_sha256": "9c1d5100d89f7c9c84f696d14e8ef591a268a71a8281b6feba4a404582d0f41a"
+    }
+  ],
+  "conclusion": "success"
+}

@@ -1,0 +1,15 @@
+{
+  "revision": "fa99159d8fadcb1b77911bd370bd86d36d51b65a",
+  "working_tree_dirty": false,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "checks": [
+    "local shared blob; duplicate RCPT deduplication; folded old Return-Path removed; prior Received and body retained",
+    "SIZE counts decoded client bytes; exact limit accepted with trace overhead; null sender, empty and header-only DATA handled",
+    "invalid header boundaries rejected; actual oversize and removed-header bytes count toward limits; connection closes",
+    "generated trace counts toward quota; one recipient over quota rejects all recipients atomically",
+    "6144-byte temporary budget admits one 4096-byte input plus 2048-byte trace reservation",
+    "reopened exports, shared recipient bytes, quota, digest and operation lookup match the final representation"
+  ],
+  "accepted_messages": 7,
+  "production_ready": false
+}
