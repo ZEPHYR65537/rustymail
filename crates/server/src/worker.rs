@@ -109,6 +109,20 @@ impl StoreWorker {
 }
 
 impl StoreClient {
+    #[cfg(unix)]
+    pub async fn change_authority(
+        &self,
+        changes: tokio::sync::watch::Sender<u64>,
+        change: impl FnOnce(&mut Store) -> Result<i64, StoreError> + Send + 'static,
+    ) -> Result<i64, StoreError> {
+        self.call(move |store| {
+            let id = change(store)?;
+            // Publish in the owner, even when the request's reply was cancelled.
+            changes.send_modify(|version| *version = version.wrapping_add(1));
+            Ok(id)
+        })
+        .await
+    }
     pub async fn call<T: Send + 'static>(
         &self,
         call: impl FnOnce(&mut Store) -> Result<T, StoreError> + Send + 'static,
@@ -158,5 +172,56 @@ impl StoreClient {
             .map_err(|_| StoreError::WorkerUnavailable)?;
         // Missing result is also ambiguous: it is never a definite rejection.
         result.await.map_err(|_| StoreError::OutcomeUnknown)?
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancellation_of_admin_reply_does_not_skip_revocation_notification() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::parse(include_str!("../../../deploy/rustymail.lab.toml")).unwrap();
+        config.data_dir = directory.path().join("mail");
+        config.limits.disk_reserve_bytes = 0;
+        config.limits.disk_reserve_percent = 0;
+        let login = Address::parse("alice@example.com").unwrap();
+        {
+            let mut store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+            store.create_account(&login, 10000).unwrap();
+        }
+        let worker = StoreWorker::start(&config, StorageRuntime::default()).unwrap();
+        let client = worker.client.clone();
+        let (entered_tx, entered_rx) = oneshot::channel();
+        let (release_tx, release_rx) = std_mpsc::channel();
+        let blocking = tokio::spawn(async move {
+            client
+                .call(move |_| {
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(())
+                })
+                .await
+                .unwrap();
+        });
+        entered_rx.await.unwrap();
+        let (changes, mut notified) = tokio::sync::watch::channel(0);
+        let client = worker.client.clone();
+        let mut pending =
+            Box::pin(client.change_authority(changes, move |store| store.disable_account(&login)));
+        tokio::select! {
+            _=&mut pending=>panic!("blocked owner returned early"),
+            _=tokio::time::sleep(std::time::Duration::from_millis(30))=>(),
+        }
+        drop(pending);
+        drop(client);
+        release_tx.send(()).unwrap();
+        blocking.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), notified.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*notified.borrow(), 1);
+        worker.shutdown().await.unwrap();
     }
 }

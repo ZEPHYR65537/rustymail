@@ -116,17 +116,19 @@ pub(crate) async fn dispatch(
         }
         AdminRequest::CredentialRevoke { selector } => {
             let id = store
-                .call(move |store| store.revoke_credential(&selector))
+                .change_authority(auth.changes.clone(), move |store| {
+                    store.revoke_credential(&selector)
+                })
                 .await?;
-            auth.notify_change();
             ("credential_revoked", json!({"account_id":id}))
         }
         AdminRequest::AccountDisable { login } => {
             let login = address(&login, config)?;
             let id = store
-                .call(move |store| store.disable_account(&login))
+                .change_authority(auth.changes.clone(), move |store| {
+                    store.disable_account(&login)
+                })
                 .await?;
-            auth.notify_change();
             ("account_disabled", json!({"account_id":id}))
         }
         AdminRequest::SendAs {
@@ -137,9 +139,10 @@ pub(crate) async fn dispatch(
             let login = address(&login, config)?;
             let sender = address(&sender, config)?;
             let id = store
-                .call(move |store| store.set_send_as(&login, &sender, enabled))
+                .change_authority(auth.changes.clone(), move |store| {
+                    store.set_send_as(&login, &sender, enabled)
+                })
                 .await?;
-            auth.notify_change();
             (
                 "send_as_changed",
                 json!({"account_id":id,"enabled":enabled}),
@@ -237,6 +240,18 @@ impl Drop for AdminListener {
 }
 
 #[cfg(unix)]
+struct SensitiveResponse(Value);
+#[cfg(unix)]
+impl Drop for SensitiveResponse {
+    fn drop(&mut self) {
+        if let Some(Value::String(secret)) = self.0.pointer_mut("/result/application_password") {
+            use zeroize::Zeroize;
+            secret.zeroize();
+        }
+    }
+}
+
+#[cfg(unix)]
 pub(crate) async fn session(
     mut stream: tokio::net::UnixStream,
     store: StoreClient,
@@ -259,7 +274,7 @@ pub(crate) async fn session(
         .await
         .map_err(|_| io::Error::other("management read timeout"))??;
     let request = serde_json::from_slice::<AdminRequest>(&bytes);
-    let mut response = match request {
+    let response = SensitiveResponse(match request {
         Ok(request) => match dispatch(request, &store, &auth, &tls, &config).await {
             Ok(value) => json!({"ok":true,"result":value}),
             Err(_) => {
@@ -268,13 +283,11 @@ pub(crate) async fn session(
             }
         },
         Err(_) => json!({"ok":false,"error":"invalid management request"}),
-    };
-    let result = tokio::time::timeout(Duration::from_secs(5), write_frame(&mut stream, &response))
-        .await
-        .map_err(|_| io::Error::other("management write timeout"))?;
-    if let Some(Value::String(secret)) = response.pointer_mut("/result/application_password") {
-        use zeroize::Zeroize;
-        secret.zeroize();
-    }
-    result
+    });
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        write_frame(&mut stream, &response.0),
+    )
+    .await
+    .map_err(|_| io::Error::other("management write timeout"))?
 }

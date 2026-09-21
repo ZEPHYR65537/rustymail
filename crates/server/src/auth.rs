@@ -238,7 +238,10 @@ impl AuthService {
         store
             .call(move |store| store.finish_authentication(&check))
             .await
-            .map_err(|_| AuthError::Denied)?;
+            .map_err(|error| match error {
+                rustymail_store::StoreError::PermissionDenied => AuthError::Denied,
+                _ => AuthError::Busy,
+            })?;
         Ok(principal)
     }
 
@@ -251,11 +254,6 @@ impl AuthService {
         })
         .await
         .map_err(|_| AuthError::Busy)?
-    }
-
-    pub fn notify_change(&self) {
-        self.changes
-            .send_modify(|version| *version = version.wrapping_add(1));
     }
 }
 

@@ -139,7 +139,7 @@ def main():
                 forged=base64.b64encode(('bob@example.com\0alice@example.com\0'+alice).encode()).decode()
                 assert c.docmd('AUTH','PLAIN '+forged)[0]==535
             finally: c.close()
-            completed.append('AUTH required, wrong and unknown credentials indistinguishable, authzid denied')
+            completed.append('AUTH required, wrong and unknown credentials return the same failure, authzid denied')
             c=authenticated()
             raw=b'From: Alice <alice@example.com>\r\nTo: bob@example.com\r\nSubject: M2\r\n\r\nPreserve TLS mail.\r\n'
             try:
