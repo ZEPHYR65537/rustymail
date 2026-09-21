@@ -99,6 +99,7 @@ pub enum Command {
     Data,
     Reset,
     Noop,
+    StartTls,
     Quit,
     Unsupported,
 }
@@ -171,7 +172,8 @@ pub fn parse_command(line: &[u8]) -> Result<Command, ParseError> {
         "RSET" if args.is_empty() => Ok(Command::Reset),
         "NOOP" => Ok(Command::Noop),
         "QUIT" if args.is_empty() => Ok(Command::Quit),
-        "DATA" | "RSET" | "QUIT" => Err(ParseError::Syntax),
+        "STARTTLS" if args.is_empty() => Ok(Command::StartTls),
+        "DATA" | "RSET" | "QUIT" | "STARTTLS" => Err(ParseError::Syntax),
         _ => Ok(Command::Unsupported),
     }
 }
@@ -218,12 +220,14 @@ pub enum Action {
     CheckRecipient(Address),
     BeginData(Envelope),
     Quit,
+    StartTls,
 }
 
 /// No sockets, DNS, files or database calls: transitions can be exhaustively
 /// exercised without a runtime. RCPT lookup has an explicit completion step.
 pub struct Session {
     greeted: bool,
+    extended: bool,
     transaction: Option<Envelope>,
     max_message_bytes: u64,
     max_recipients: usize,
@@ -231,11 +235,12 @@ pub struct Session {
 
 impl Session {
     pub fn authentication_allowed(&self) -> bool {
-        self.greeted && self.transaction.is_none()
+        self.extended && self.transaction.is_none()
     }
     pub fn new(max_message_bytes: u64, max_recipients: usize) -> Self {
         Self {
             greeted: false,
+            extended: false,
             transaction: None,
             max_message_bytes,
             max_recipients,
@@ -246,9 +251,10 @@ impl Session {
         match command {
             Command::Ehlo(_) | Command::Helo(_) => {
                 self.greeted = true;
+                self.extended = matches!(command, Command::Ehlo(_));
                 self.transaction = None;
                 Action::Hello {
-                    extended: matches!(command, Command::Ehlo(_)),
+                    extended: self.extended,
                 }
             }
             Command::Reset => {
@@ -257,6 +263,8 @@ impl Session {
             }
             Command::Noop => Action::Reply(Reply::new(250, "2.0.0 OK")),
             Command::Quit => Action::Quit,
+            Command::StartTls if self.extended => Action::StartTls,
+            Command::StartTls => Action::Reply(Reply::new(503, "5.5.1 Send EHLO first")),
             Command::Unsupported => Action::Reply(Reply::new(502, "5.5.1 Command not supported")),
             Command::Mail { sender, size } => {
                 // A failed new MAIL must never retain recipients from an older transaction.
@@ -522,6 +530,39 @@ mod tests {
             state.apply(Command::Data),
             Action::Reply(Reply { code: 503, .. })
         ));
+    }
+
+    #[test]
+    fn extensions_require_ehlo_and_a_new_tls_session_has_no_old_envelope() {
+        assert_eq!(parse_command(b"STARTTLS"), Ok(Command::StartTls));
+        assert_eq!(parse_command(b"STARTTLS extra"), Err(ParseError::Syntax));
+        let mut state = Session::new(1024, 2);
+        assert!(matches!(
+            state.apply(Command::StartTls),
+            Action::Reply(Reply { code: 503, .. })
+        ));
+        state.apply(Command::Helo("client".into()));
+        assert!(!state.authentication_allowed());
+        assert!(matches!(
+            state.apply(Command::StartTls),
+            Action::Reply(Reply { code: 503, .. })
+        ));
+        state.apply(Command::Ehlo("client".into()));
+        assert!(state.authentication_allowed());
+        state.apply(Command::Mail {
+            sender: None,
+            size: None,
+        });
+        state.recipient_result(Address::parse("a@b").unwrap(), true);
+        assert!(!state.authentication_allowed());
+        assert!(matches!(state.apply(Command::StartTls), Action::StartTls));
+        // Successful transport upgrade constructs a fresh session.
+        state = Session::new(1024, 2);
+        assert!(matches!(
+            state.apply(Command::Data),
+            Action::Reply(Reply { code: 503, .. })
+        ));
+        assert!(!state.authentication_allowed());
     }
 
     #[test]

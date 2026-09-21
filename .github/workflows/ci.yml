@@ -43,6 +43,16 @@ jobs:
           path: reports/local/m2-smoke.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Independent SMTP roles and STARTTLS boundary checks
+        run: python scripts/m3_smoke.py
+      - name: Preserve M3.1 protocol evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m3-protocol-${{ matrix.os }}
+          path: reports/local/m3-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Documentation links and design attachments
         run: python scripts/check_docs.py
 

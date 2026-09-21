@@ -71,7 +71,7 @@ Emacs 配置继续要求生产 TLS/IMAP。本阶段可以验证提交底层能�
 
 ## 4. 认证和授权是不同的检查
 
-TLS 后 EHLO 才公布 `AUTH PLAIN`。PLAIN 表示 SASL 认证载荷的格式，不表示此处使用明文网络；只有隐式 TLS 模式接收登录，明文模式的 AUTH 请求被拒绝。支持初始响应及 334 challenge，不支持 LOGIN/OAuth/STARTTLS。AUTH 行上限 1024 字节，其余 SMTP 命令仍为 512 字节；不宣称完整 RFC 4954 扩展一致性。
+TLS 后 EHLO 才公布 `AUTH PLAIN`。PLAIN 表示 SASL 认证载荷的格式，不表示此处使用明文网络。M2 首先只实现隐式 TLS 提交；0.4.0 又加入 STARTTLS 提交入口，但登录始终只在加密后的提交入口开放，收信入口不提供 AUTH。支持初始响应及 334 challenge，不支持 LOGIN/OAuth。AUTH 行上限 1024 字节，其余 SMTP 命令仍为 512 字节；不宣称完整 RFC 4954 扩展一致性。新入口与升级边界见 [M3.1 教程](14-m3-starttls.md)。
 
 凭据的 account、scope 和 auth_epoch 共同形成 Principal。`mail` 可以申请发信，`read_only` 即使密码正确也不能发送；读邮件能力等待 M5。`authzid` 必须为空或指向同一个规范化账号，不能用 Alice 的密码请求 Bob 身份。
 

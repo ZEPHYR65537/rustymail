@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.3.1 L0 本地实验实现：在 M1 存储与恢复核心上加入隐式 TLS、应用密码、发件身份授权及本地管理接口。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。M1 的故障实验与性能证据见[验证报告](reports/m1/validation.md)。M2 已通过两平台 CI，包含 Linux 在线管理、不同 UID 拒绝、撤销与证书轮换；操作入口见 [M2 教程](docs/12-m2-identity.md)，原始证据见 [M2 报告](reports/m2/validation.md)。
+**当前是 0.4.0 / M3.1 L0 实验实现：已有存储恢复、身份与 TLS、三个 SMTP 入口角色及 STARTTLS。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或直接进入[入口与 STARTTLS 实验](docs/14-m3-starttls.md)。M3 的消息头责任和完整输入契约仍待完成。
 
 0.3.1 修复磁盘任务取消、撤销通知丢失和管理响应超限，复用 DATA 行缓冲并收紧组合资源预算。原理与保留限制见[取消与资源边界教程](docs/13-cancellation-and-bounds.md)，回归证据见[修复验证报告](reports/0.3.1/validation.md)。
 
@@ -41,7 +41,8 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | 已运行的行为 | 边界 |
 | --- | --- |
 | EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT | 简化 ASCII dot-atom 信封；非完整 SMTP 一致性声明 |
-| SIZE、8BITMIME、严格 CRLF 与点转义 | 不支持 SMTPUTF8、STARTTLS、PIPELINING |
+| SIZE、8BITMIME、严格 CRLF 与点转义 | 不支持 SMTPUTF8、PIPELINING |
+| 三入口角色、STARTTLS 状态重置与预读丢弃 | 只在环回启用；共享连接/握手/接收预算；握手失败关闭 |
 | 隐式 TLS、AUTH PLAIN、Argon2id 应用密码 | 登录仅在 TLS 实验模式启用；散列并发/等待有界；无 LOGIN/OAuth |
 | send-as、权限 scope、事务内重新授权、撤销旧会话 | 提交只接受受限的单个 ASCII From；无完整 MIME 地址解析；只投递本地邮箱 |
 | Linux Unix socket 管理、对端身份校验、证书重载 | 只供本机管理员；Windows 使用离线管理；ACME 与证书临期告警待实现 |
@@ -50,7 +51,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | 账号创建、分页列信、原文导出、完整性检查、离线 GC | GC 默认预览；仅回收无引用文件，不过期删除邮箱或投递历史 |
 | schema 1→2 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
 
-配置检查会验证未来配置字段，但不表示对应服务已实现。`serve-lab` 只绑定 `listeners.smtp`；`serve-lab-tls` 只绑定 `listeners.submissions`，并在 Linux 启用管理 socket。两种模式均无指标服务和 IMAP。Emacs 配置维持 TLS 要求；完整 Gnus 收发互通等待 M5。
+配置检查会验证未来配置字段，但不表示对应服务已实现。`serve-lab` 只绑定 `listeners.smtp`；`serve-lab-tls` 只绑定 `listeners.submissions`；新 `serve-lab-smtp` 同时绑定 smtp/submissions/submission，后两种启动模式在 Linux 启用私有管理 socket。均无指标服务和 IMAP。Emacs 配置维持 TLS 要求；完整 Gnus 收发互通等待 M5。
 
 ## 从这里开始
 

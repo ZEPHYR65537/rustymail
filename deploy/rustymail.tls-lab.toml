@@ -1,5 +1,6 @@
-# M2 loopback laboratory: implicit TLS and application-password authentication.
-# Use serve-lab-tls: only submissions is active; Unix admin socket on Linux.
+# Encrypted loopback laboratory; still not a production configuration.
+# serve-lab-tls: only submissions; serve-lab-smtp: smtp/submissions/submission.
+# Both modes provide the private Unix admin socket on Linux.
 schema_version = 1
 mode = "lab"
 hostname = "mail.example.com"

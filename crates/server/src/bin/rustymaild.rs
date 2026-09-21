@@ -23,6 +23,8 @@ enum Command {
     ServeLab,
     /// Loopback implicit TLS submission and local administration (Unix socket on Linux).
     ServeLabTls,
+    /// Three loopback roles: SMTP receive, implicit TLS and STARTTLS submission.
+    ServeLabSmtp,
     /// Reserved production entry point; always refuses in this release.
     Serve,
 }
@@ -61,6 +63,10 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::ServeLabTls=>{
             let server=LabServer::bind_tls(config).await?;
+            server.serve_until(shutdown_signal()).await?;
+        }
+        Command::ServeLabSmtp => {
+            let server = LabServer::bind_smtp(config).await?;
             server.serve_until(shutdown_signal()).await?;
         }
     }

@@ -110,6 +110,7 @@ pub(crate) async fn dispatch(
     auth: &AuthService,
     tls: &TlsSettings,
     config: &Config,
+    mode: &'static str,
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
     fn address(raw: &str, config: &Config) -> Result<Address, io::Error> {
         let address = Address::parse(raw).map_err(|_| io::Error::other("invalid local address"))?;
@@ -125,7 +126,7 @@ pub(crate) async fn dispatch(
     let (event, result) = match request {
         AdminRequest::Status => (
             "admin_status",
-            json!({"version":env!("CARGO_PKG_VERSION"),"mode":"lab_tls","production_ready":false}),
+            json!({"version":env!("CARGO_PKG_VERSION"),"mode":mode,"production_ready":false}),
         ),
         AdminRequest::CredentialCreate {
             login,
@@ -237,6 +238,7 @@ pub(crate) async fn session(
     _auth: Arc<AuthService>,
     _tls: TlsSettings,
     _config: Arc<Config>,
+    _mode: &'static str,
 ) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -307,6 +309,7 @@ pub(crate) async fn session(
     auth: Arc<AuthService>,
     tls: TlsSettings,
     config: Arc<Config>,
+    mode: &'static str,
 ) -> io::Result<()> {
     use std::time::Duration;
     let peer = stream.peer_cred()?;
@@ -327,7 +330,7 @@ pub(crate) async fn session(
     .map_err(|_| io::Error::other("management read timeout"))??;
     let request = serde_json::from_slice::<AdminRequest>(&bytes);
     let response = SensitiveResponse(match request {
-        Ok(request) => match dispatch(request, &store, &auth, &tls, &config).await {
+        Ok(request) => match dispatch(request, &store, &auth, &tls, &config, mode).await {
             Ok(value) => json!({"ok":true,"result":value}),
             Err(_) => {
                 log_event("admin_request_failed", json!({}));

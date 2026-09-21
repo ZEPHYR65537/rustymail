@@ -5,8 +5,10 @@ mod auth_dialog;
 mod logging;
 mod revocation;
 pub mod tls;
+mod transport;
 mod worker;
 pub use logging::{flush_logs, log_event, start_logging};
+use transport::{Role, Transport};
 pub use worker::store_options;
 use worker::{StoreClient, StoreWorker};
 
@@ -51,6 +53,9 @@ pub enum ServerError {
 
 pub struct LabServer {
     listener: TcpListener,
+    role: Role,
+    submission_listener: Option<TcpListener>,
+    implicit_listener: Option<TcpListener>,
     config: Arc<Config>,
     worker: StoreWorker,
     tls: Option<tls::TlsSettings>,
@@ -94,6 +99,9 @@ impl LabServer {
             .map_err(|_| ServerError::Task)??;
         Ok(Self {
             listener,
+            role: Role::Receiver,
+            submission_listener: None,
+            implicit_listener: None,
             config: Arc::new(config),
             worker,
             tls: None,
@@ -104,6 +112,15 @@ impl LabServer {
 
     /// Implicit TLS plus AUTH PLAIN on the loopback submissions listener.
     pub async fn bind_tls(config: Config) -> Result<Self, ServerError> {
+        Self::bind_secure(config, false).await
+    }
+
+    /// Three loopback SMTP roles sharing one store and global admission budgets.
+    pub async fn bind_smtp(config: Config) -> Result<Self, ServerError> {
+        Self::bind_secure(config, true).await
+    }
+
+    async fn bind_secure(config: Config, all_roles: bool) -> Result<Self, ServerError> {
         config.require_lab_receiver()?;
         if !config.listeners.submissions.ip().is_loopback() {
             return Err(io::Error::other("lab TLS listener must use loopback").into());
@@ -115,7 +132,20 @@ impl LabServer {
         let auth = auth::AuthService::new(config.authentication.clone())
             .await
             .map_err(|_| io::Error::other("authentication initialization failed"))?;
-        let listener = TcpListener::bind(config.listeners.submissions).await?;
+        let listener = TcpListener::bind(if all_roles {
+            config.listeners.smtp
+        } else {
+            config.listeners.submissions
+        })
+        .await?;
+        let (submission_listener, implicit_listener) = if all_roles {
+            (
+                Some(TcpListener::bind(config.listeners.submission).await?),
+                Some(TcpListener::bind(config.listeners.submissions).await?),
+            )
+        } else {
+            (None, None)
+        };
         #[cfg(unix)]
         let admin = Some(admin::AdminListener::bind(&config.admin_socket)?);
         #[cfg(not(unix))]
@@ -128,6 +158,13 @@ impl LabServer {
         .map_err(|_| ServerError::Task)??;
         Ok(Self {
             listener,
+            role: if all_roles {
+                Role::Receiver
+            } else {
+                Role::ImplicitSubmission
+            },
+            submission_listener,
+            implicit_listener,
             config: Arc::new(config),
             worker,
             tls: Some(tls),
@@ -138,6 +175,22 @@ impl LabServer {
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
+    }
+
+    async fn accept(&self) -> io::Result<(TcpStream, SocketAddr, Role)> {
+        async fn optional(listener: &Option<TcpListener>) -> io::Result<(TcpStream, SocketAddr)> {
+            match listener {
+                Some(listener) => listener.accept().await,
+                None => std::future::pending().await,
+            }
+        }
+        let (incoming, role) = tokio::select! {
+            result = self.listener.accept() => (result, self.role),
+            result = optional(&self.submission_listener) => (result, Role::StartTlsSubmission),
+            result = optional(&self.implicit_listener) => (result, Role::ImplicitSubmission),
+        };
+        let (stream, peer) = incoming?;
+        Ok((stream, peer, role))
     }
 
     pub async fn serve_until(self, shutdown: impl Future<Output = ()>) -> Result<(), ServerError> {
@@ -169,15 +222,16 @@ impl LabServer {
                     if let Ok(permit)=management.clone().try_acquire_owned()
                         && let (Some(auth),Some(tls))=(self.auth.clone(),self.tls.clone()) {
                         let client=self.worker.client.clone();let config=self.config.clone();
+                        let mode=if self.submission_listener.is_some() {"lab_smtp"} else {"lab_tls"};
                         tasks.spawn(async move {let _permit=permit;
-                            let _=timeout(Duration::from_secs(60),admin::session(stream,client,auth,tls,config)).await;
+                            let _=timeout(Duration::from_secs(60),admin::session(stream,client,auth,tls,config,mode)).await;
                         });
                     }
                 }
-                incoming = self.listener.accept() => {
-                    let (stream, peer) = incoming?;
+                incoming = self.accept() => {
+                    let (stream, peer, role) = incoming?;
                     let Ok(permit) = connections.clone().try_acquire_owned() else {
-                        if self.tls.is_none() { reject_connection(stream,b"421 4.3.2 Connection limit\r\n").await; } continue;
+                        if role != Role::ImplicitSubmission { reject_connection(stream,b"421 4.3.2 Connection limit\r\n").await; } continue;
                     };
                     let allowed = {
                         let mut map = counts.lock().map_err(|_| ServerError::Task)?;
@@ -185,7 +239,7 @@ impl LabServer {
                             false
                         } else { *map.entry(peer.ip()).or_default() += 1; true }
                     };
-                    if !allowed { if self.tls.is_none() {reject_connection(stream,b"421 4.3.2 IP connection limit\r\n").await;} continue; }
+                    if !allowed { if role != Role::ImplicitSubmission {reject_connection(stream,b"421 4.3.2 IP connection limit\r\n").await;} continue; }
                     let lease = ConnectionLease { _permit:permit, ip:peer.ip(), counts:counts.clone() };
                     let config = self.config.clone();
                     let client = self.worker.client.clone();
@@ -195,13 +249,7 @@ impl LabServer {
                         let _lease = lease;
                         let result=async {
                             stream.set_nodelay(true)?;
-                            if let Some(tls)=tls {
-                                let Ok(permit)=handshakes.try_acquire_owned() else {return Ok(());};
-                                let acceptor=tokio_rustls::TlsAcceptor::from(tls.config()?);
-                                let stream=timeout(Duration::from_secs(config.tls.handshake_timeout_seconds),acceptor.accept(stream)).await.map_err(|_|timed_out())??;
-                                drop(permit);
-                                smtp_session(stream,config,client,ingest,auth,peer.ip()).await
-                            } else {smtp_session(stream,config,client,ingest,None,peer.ip()).await}
+                            smtp_session(stream, SessionContext {config, store:client, ingest, auth, peer:peer.ip(), tls, handshakes, role}).await
                         }.await;
                         if result.is_err() {
                             // Deliberately no message, address, AUTH or arbitrary input in logs.
@@ -212,6 +260,8 @@ impl LabServer {
             }
         }
         drop(self.listener);
+        drop(self.submission_listener);
+        drop(self.implicit_listener);
         let grace = Duration::from_secs(self.config.timeouts.shutdown_grace_seconds);
         if timeout(grace, async { while tasks.join_next().await.is_some() {} })
             .await
@@ -291,14 +341,52 @@ async fn reply<W: AsyncWrite + Unpin>(writer: &mut W, reply: Reply) -> io::Resul
     .await
 }
 
-async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
-    stream: S,
+struct SessionContext {
     config: Arc<Config>,
     store: StoreClient,
     ingest: Arc<Semaphore>,
     auth: Option<Arc<auth::AuthService>>,
     peer: IpAddr,
-) -> Result<(), ServerError> {
+    tls: Option<tls::TlsSettings>,
+    handshakes: Arc<Semaphore>,
+    role: Role,
+}
+
+async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), ServerError> {
+    let SessionContext {
+        config,
+        store,
+        ingest,
+        auth,
+        peer,
+        tls,
+        handshakes,
+        role,
+    } = context;
+    let auth = auth.filter(|_| role.submission());
+    // One unauthenticated lifetime, including STARTTLS: upgrading does not buy
+    // another connection budget or another authentication timeout.
+    let unauthenticated_deadline = tokio::time::Instant::now()
+        + Duration::from_secs(config.timeouts.submission_unauthenticated_seconds);
+    let mut encrypted = role == Role::ImplicitSubmission;
+    let mut stream = Transport::Plain(stream);
+    if encrypted {
+        let Ok(_permit) = handshakes.clone().try_acquire_owned() else {
+            return Ok(());
+        };
+        let tls = tls
+            .as_ref()
+            .ok_or_else(|| io::Error::other("TLS settings missing"))?;
+        stream = tokio::time::timeout_at(
+            unauthenticated_deadline,
+            stream.upgrade(
+                tls.config()?,
+                Duration::from_secs(config.tls.handshake_timeout_seconds),
+            ),
+        )
+        .await
+        .map_err(|_| timed_out())??;
+    }
     let (read, mut write) = tokio::io::split(stream);
     let mut read = BufReader::with_capacity(config.limits.stream_buffer_bytes, read);
     write_response(
@@ -316,8 +404,6 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
         changes = auth.changes.subscribe();
     }
     let mut revocations = revocation::Revocations::new(changes);
-    let unauthenticated_deadline = tokio::time::Instant::now()
-        + Duration::from_secs(config.timeouts.submission_unauthenticated_seconds);
     let mut auth_attempts = 0;
     loop {
         let command_deadline =
@@ -348,6 +434,18 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
             .next()
             .is_some_and(|word| word.eq_ignore_ascii_case(b"AUTH"))
         {
+            if !role.submission() {
+                reply(
+                    &mut write,
+                    Reply::new(502, "5.5.1 AUTH not available on receiver"),
+                )
+                .await?;
+                continue;
+            }
+            if !encrypted {
+                reply(&mut write, Reply::new(538, "5.7.11 Encryption required")).await?;
+                continue;
+            }
             let Some(auth) = &auth else {
                 reply(&mut write, Reply::new(538, "5.7.11 Encryption required")).await?;
                 continue;
@@ -400,6 +498,20 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
                 continue;
             }
         };
+        if role.submission()
+            && !encrypted
+            && !matches!(
+                command,
+                Command::Ehlo(_) | Command::Noop | Command::StartTls | Command::Quit
+            )
+        {
+            reply(
+                &mut write,
+                Reply::new(530, "5.7.0 Must issue STARTTLS first"),
+            )
+            .await?;
+            continue;
+        }
         if auth.is_some() {
             if matches!(command, Command::Mail { .. }) {
                 state.apply(Command::Reset);
@@ -441,7 +553,9 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
                         "250-{}\r\n250-SIZE {}\r\n250-8BITMIME\r\n{}250 ENHANCEDSTATUSCODES\r\n",
                         config.hostname,
                         config.limits.message_bytes,
-                        if auth.is_some() && principal.is_none() {
+                        if !encrypted && tls.is_some() {
+                            "250-STARTTLS\r\n"
+                        } else if encrypted && auth.is_some() && principal.is_none() {
                             "250-AUTH PLAIN\r\n"
                         } else {
                             ""
@@ -451,6 +565,46 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
                     format!("250 {}\r\n", config.hostname)
                 };
                 write_response(&mut write, text.as_bytes()).await?;
+            }
+            Action::StartTls => {
+                if encrypted {
+                    reply(&mut write, Reply::new(503, "5.5.1 TLS already active")).await?;
+                    continue;
+                }
+                let Some(tls) = &tls else {
+                    reply(&mut write, Reply::new(502, "5.5.1 STARTTLS not available")).await?;
+                    continue;
+                };
+                let Ok(_permit) = handshakes.clone().try_acquire_owned() else {
+                    reply(&mut write, Reply::new(454, "4.7.0 TLS capacity exhausted")).await?;
+                    continue;
+                };
+                let tls_config = tls.config()?;
+                reply(&mut write, Reply::new(220, "2.0.0 Ready to start TLS")).await?;
+                // into_inner deliberately discards every prefetched plaintext
+                // byte. Remaining kernel bytes enter TLS parsing, never SMTP.
+                let plain = discard_read_buffer(read, write);
+                let handshake = plain.upgrade(
+                    tls_config,
+                    Duration::from_secs(config.tls.handshake_timeout_seconds),
+                );
+                let stream = if role.submission() {
+                    tokio::time::timeout_at(unauthenticated_deadline, handshake)
+                        .await
+                        .map_err(|_| timed_out())??
+                } else {
+                    handshake.await?
+                };
+                let halves = tokio::io::split(stream);
+                read = BufReader::with_capacity(config.limits.stream_buffer_bytes, halves.0);
+                write = halves.1;
+                encrypted = true;
+                state = Session::new(
+                    config.limits.message_bytes,
+                    config.limits.recipients_per_message,
+                );
+                principal = None;
+                // No second SMTP banner: the next bytes must be a fresh EHLO.
             }
             Action::Quit => {
                 reply(&mut write, Reply::new(221, "2.0.0 Bye")).await?;
@@ -601,6 +755,37 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
                 }
             }
         }
+    }
+}
+
+fn discard_read_buffer<S: AsyncRead + Unpin>(
+    read: BufReader<tokio::io::ReadHalf<S>>,
+    write: tokio::io::WriteHalf<S>,
+) -> S {
+    read.into_inner().unsplit(write)
+}
+
+#[cfg(test)]
+mod transport_boundary_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn upgrade_drops_prefetched_plaintext_before_reading_new_transport_bytes() {
+        let (mut peer, stream) = tokio::io::duplex(256);
+        peer.write_all(b"STARTTLS\r\nEHLO injected\r\nMAIL FROM:<evil@remote.test>\r\n")
+            .await
+            .unwrap();
+        let (read, write) = tokio::io::split(stream);
+        let mut read = BufReader::with_capacity(256, read);
+        assert_eq!(line(&mut read, 512).await.unwrap().unwrap(), b"STARTTLS");
+        assert!(read.buffer().starts_with(b"EHLO injected"));
+        let stream = discard_read_buffer(read, write);
+        peer.write_all(b"fresh transport bytes\r\n").await.unwrap();
+        let mut read = BufReader::new(stream);
+        assert_eq!(
+            line(&mut read, 512).await.unwrap().unwrap(),
+            b"fresh transport bytes"
+        );
     }
 }
 
