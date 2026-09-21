@@ -22,7 +22,7 @@ flowchart LR
 
 图表达逻辑关系；实际收 DATA 时先把原文流式写入暂存文件，再由扫描组件从文件读取，最后提交。不能为了符合图的布局把邮件全部装进 `Vec<u8>`。
 
-主服务 `rustymaild` 管理网络、调度和存储；管理工具 `rustymailctl` 通过本地 Unix socket 请求管理动作。MIME/认证解析采用受限工作进程 `rustymail-worker` 隔离不可预测的输入开销；第三方 Rspamd 独立运行。这里是“一个核心服务 + 隔离工作进程”，不是零子进程假设。
+主服务 `rustymaild` 管理网络、调度和存储；管理工具 `rustymailctl` 通过本地 Unix socket 请求管理动作。MIME 解析计划采用受限工作进程 `rustymail-worker` 隔离不可预测的输入开销；第三方 Rspamd 独立运行。M2 的 SASL 输入有严格长度上限，Argon2 参数预检后在进程内的有界 blocking 任务运行，见 [M2 教程](12-m2-identity.md)与 ADR 011。MIME worker 的隔离验证仍待 M0 完成。
 
 主服务只支持单实例写入同一数据目录。启动持有目录锁；第二个实例拒绝启动。CLI 不绕过主服务并发修改数据库，离线修复必须先停止服务。
 

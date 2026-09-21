@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.3.0 L0 本地实验实现：在 M1 存储与恢复核心上加入隐式 TLS、应用密码、发件身份授权及本地管理接口。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。M1 的故障实验与性能证据见[验证报告](reports/m1/validation.md)。M2 使用 `serve-lab-tls` 与 `deploy/rustymail.tls-lab.toml`，完整实验可运行 `python scripts/m2_smoke.py`（先构建 `m2_certificates` example）；Linux 在线管理验证正在 CI 验收。
+**当前是 0.3.0 L0 本地实验实现：在 M1 存储与恢复核心上加入隐式 TLS、应用密码、发件身份授权及本地管理接口。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。M1 的故障实验与性能证据见[验证报告](reports/m1/validation.md)。M2 已通过两平台 CI，包含 Linux 在线管理、不同 UID 拒绝、撤销与证书轮换；操作入口见 [M2 教程](docs/12-m2-identity.md)，原始证据见 [M2 报告](reports/m2/validation.md)。
 
 ## 运行第一封邮件
 
@@ -39,13 +39,16 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | 已运行的行为 | 边界 |
 | --- | --- |
 | EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT | 简化 ASCII dot-atom 信封；非完整 SMTP 一致性声明 |
-| SIZE、8BITMIME、严格 CRLF 与点转义 | 不支持 SMTPUTF8、AUTH、STARTTLS、PIPELINING |
+| SIZE、8BITMIME、严格 CRLF 与点转义 | 不支持 SMTPUTF8、STARTTLS、PIPELINING |
+| 隐式 TLS、AUTH PLAIN、Argon2id 应用密码 | 登录仅在 TLS 实验模式启用；散列并发/等待有界；无 LOGIN/OAuth |
+| send-as、权限 scope、事务内重新授权、撤销旧会话 | 提交只接受受限的单个 ASCII From；无完整 MIME 地址解析；只投递本地邮箱 |
+| Linux Unix socket 管理、对端身份校验、证书重载 | 只供本机管理员；Windows 使用离线管理；ACME 与证书临期告警待实现 |
 | 25 MiB 有界流式收信、多收件人配额原子提交 | 无 MIME 语义处理；不添加 Received/Return-Path 头；仅合成实验邮件 |
 | 原文文件 + WAL/FULL 元数据、内部幂等键 | Linux ext4/QEMU 断电及实际磁盘满实验通过；物理掉电与生产存储栈待验收；Windows 只用于开发 |
 | 账号创建、分页列信、原文导出、完整性检查、离线 GC | GC 默认预览；仅回收无引用文件，不过期删除邮箱或投递历史 |
 | schema 1→2 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
 
-配置检查会验证未来配置字段，但不表示对应服务已实现。实验服务只绑定 `listeners.smtp`，不启用其余监听、指标或管理 socket。Emacs 生产配置维持 TLS 要求，当前不能连接这个无 TLS/IMAP 的实验接收器。
+配置检查会验证未来配置字段，但不表示对应服务已实现。`serve-lab` 只绑定 `listeners.smtp`；`serve-lab-tls` 只绑定 `listeners.submissions`，并在 Linux 启用管理 socket。两种模式均无指标服务和 IMAP。Emacs 配置维持 TLS 要求；完整 Gnus 收发互通等待 M5。
 
 ## 从这里开始
 
@@ -61,6 +64,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 10. [设计决策与参考资料](docs/09-decisions-and-references.md)：可复核的官方资料、更新策略和知识记录模板。
 11. [第一轮实现教程](docs/10-first-implementation.md)：从实际源码学习 TCP 分帧、状态机、异步取消、持久化与故障实验。
 12. [M1：故障、维护与实测](docs/11-m1-storage.md)：操作手册、故障边界、迁移与回收规则、Linux 实验。
+13. [M2：TLS、身份、授权与本地管理](docs/12-m2-identity.md)：独立客户端实验、密码验证预算、事务内授权和异步取消的责任边界。
 
 ## 配套文件
 
@@ -69,12 +73,14 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [emacs/rustymail.el](emacs/rustymail.el) | 可加载的客户端配置；需填写自己的账号；服务端互通尚未验证 |
 | [emacs/authinfo.example](emacs/authinfo.example) | 凭据格式示例，只有占位值 |
 | [deploy/rustymail.lab.toml](deploy/rustymail.lab.toml) | 可运行实验配置，显式禁用未实现的扫描和外发 |
+| [deploy/rustymail.tls-lab.toml](deploy/rustymail.tls-lab.toml) | 隐式 TLS 与身份实验；按 M2 教程生成临时证书及应用密码 |
 | [deploy/rustymail.example.toml](deploy/rustymail.example.toml) | 完整配置契约；`check` 可验证；扫描必需，因此不能用来启动实验接收器 |
 | [deploy/rustymail.service.in](deploy/rustymail.service.in) | 未来 Linux 服务模板；当前不可直接启动 |
 | [存储迁移](crates/store/migrations/0002.sql) | 当前 `user_version=2`，加入迁移与维护记录；保留所有已接受邮件 |
 | [第一轮验证报告](reports/0.1.0-lab/validation.md) | 0.1.0 的历史测试、依赖和进程故障证据 |
 | [M1 验证报告](reports/m1/validation.md) | 0.2.0 的迁移、维护、Linux VM 故障与性能原始数据 |
-| [验证记录](docs/validation.md) | 本次实际运行的检查，以及仍未执行的验证 |
+| [M2 验证报告](reports/m2/validation.md) | 0.3.0 的 TLS、身份、Unix 管理证据及依赖审计 |
+| [验证记录](docs/validation.md) | 设计阶段的历史静态检查，以及各阶段验证报告入口 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。
 

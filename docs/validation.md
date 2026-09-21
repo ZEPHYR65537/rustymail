@@ -1,6 +1,6 @@
 # 设计阶段验证记录
 
-本页保留首个设计提交的历史验证结果。后续 Rust 实现、真实 TCP 与进程故障检查见 [0.1.0 L0 实现报告](../reports/0.1.0-lab/validation.md)；迁移、维护和 Linux 实验的更新状态见 [M1 报告](../reports/m1/validation.md)。当前文档链接和附件检查可执行 `python scripts/check_docs.py`。
+本页保留首个设计提交的历史验证结果。后续 Rust 实现、真实 TCP 与进程故障检查见 [0.1.0 L0 实现报告](../reports/0.1.0-lab/validation.md)；迁移、维护和 Linux 实验见 [M1 报告](../reports/m1/validation.md)；TLS、身份、在线管理和最新依赖审计见 [M2 报告](../reports/m2/validation.md)。当前文档链接和附件检查可执行 `python scripts/check_docs.py`。
 
 日期：2026-09-21。环境：Windows / PowerShell 7.6.5，Emacs 31.1，Python 3.13.5。此记录只证明设计附件的静态可用性，不证明服务端、协议互通或生产可靠性。
 
@@ -32,6 +32,6 @@ SQL 草案可以在空 SQLite 3.37+ 数据库中执行，随后检查 `PRAGMA fo
 
 ## 设计提交时未执行的检查
 
-设计提交当时尚未有 Rust 服务端，因此未执行 Rust 构建/测试、SMTP/IMAP 互通与故障注入。后续 L0 已完成其中一部分，结果以新报告为准。Linux systemd 生产启动、IMAP、断电、性能基准、72 小时稳定性、DNS/TLS 公网配置、真实外部收发和备份恢复演练仍未验收。
+设计提交当时尚未有 Rust 服务端，因此未执行 Rust 构建/测试、SMTP/IMAP 互通与故障注入。后续 L0 已完成其中一部分，包括 M1 的 VM 断电/实际磁盘满/短时性能基线与 M2 的 TLS/身份实验，结果以新报告为准。Linux systemd 生产启动、IMAP、物理存储栈掉电、生产性能与 72 小时稳定性、DNS/TLS 公网配置、真实外部收发和备份恢复演练仍未验收。
 
 Emacs 的 `.gpg` 凭据没有创建，没有修改用户已有 init，也没有导入任何真实密码。客户端仅使用占位值完成本机静态验证。

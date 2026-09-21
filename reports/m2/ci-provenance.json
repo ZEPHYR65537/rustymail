@@ -1,0 +1,39 @@
+{
+  "code_revision": "6f852d82d8bdfa69b83f9b6656beab8b9dea9458",
+  "ci_run": "https://github.com/ZEPHYR65537/rustymail/actions/runs/35594979361",
+  "conclusion": "success",
+  "artifacts": [
+    {
+      "id": 10636204216,
+      "name": "m2-protocol-ubuntu-24.04",
+      "zip_sha256": "7df44f3f0fc58e9e2fb7a11bff1acbbfe77273c0730e6e7ba35b44243fe1f7c1",
+      "member": "m2-smoke.json",
+      "archived_as": "linux-protocol.json",
+      "transformation": "none",
+      "archived_sha256": "e18daa2d53fa911ed991db2f8d947d335425d60d461ded528186556bbfbcb365"
+    },
+    {
+      "id": 10635948387,
+      "name": "m2-protocol-windows-latest",
+      "zip_sha256": "3ad6ce577784362676533fdd2fa8b324131c91ed7420a968c95e2c03fcec3a94",
+      "member": "m2-smoke.json",
+      "archived_as": "windows-protocol.json",
+      "transformation": "normalize CRCRLF to LF; JSON values unchanged",
+      "archived_sha256": "97439ed12aaa9d4b8c87ddff54da11afa61e3d7b08fbc274ab159c5678be6d21"
+    },
+    {
+      "id": 10636431084,
+      "name": "m1-linux-evidence",
+      "zip_sha256": "6bb87190a93fa4b98862d624310dd3f88ec4c950d463d9b0abf2f72d520b3a7a",
+      "member": "powercut.json",
+      "archived_as": "storage-regression.json",
+      "transformation": "none",
+      "archived_sha256": "98287250e006f529ad915523bb24dd4471996e8702ae31a62abe756ad2487c24"
+    }
+  ],
+  "tests": {
+    "windows": 41,
+    "linux": 45
+  },
+  "production_ready": false
+}
