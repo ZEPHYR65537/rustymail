@@ -412,18 +412,21 @@ fn migration_is_atomic_adopts_only_the_exact_legacy_schema_and_checks_history() 
             Err(StoreError::SchemaVersion)
         ));
     }
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().join("mail");
-    legacy(&root);
-    let connection = Connection::open(root.join("meta.sqlite")).unwrap();
-    connection
-        .execute("CREATE TABLE unrelated(id INTEGER)", [])
-        .unwrap();
-    drop(connection);
-    assert!(matches!(
-        Store::open_existing(&root, options()),
-        Err(StoreError::SchemaVersion)
-    ));
+    for statement in [
+        "CREATE TABLE unrelated(id INTEGER)",
+        "CREATE TABLE sqliteXextra(id INTEGER)",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("mail");
+        legacy(&root);
+        let connection = Connection::open(root.join("meta.sqlite")).unwrap();
+        connection.execute(statement, []).unwrap();
+        drop(connection);
+        assert!(matches!(
+            Store::open_existing(&root, options()),
+            Err(StoreError::SchemaVersion)
+        ));
+    }
 }
 
 #[test]

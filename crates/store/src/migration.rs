@@ -26,7 +26,8 @@ fn checksum(sql: &str) -> String {
 
 type SchemaObject = (String, String, Option<String>);
 fn shape(connection: &Connection) -> rusqlite::Result<Vec<SchemaObject>> {
-    connection.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")?
+    // GLOB treats '_' literally; LIKE would hide user objects named sqliteX...
+    connection.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name")?
         .query_map([], |r| {
             let sql: Option<String> = r.get(2)?;
             Ok((r.get(0)?, r.get(1)?, sql.map(|sql|sql.replace("\r\n","\n"))))
