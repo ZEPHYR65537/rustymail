@@ -1,6 +1,6 @@
 # 设计阶段验证记录
 
-本页保留首个设计提交的历史验证结果。后续 Rust 实现、真实 TCP 与进程故障检查见 [0.1.0 L0 实现报告](../reports/0.1.0-lab/validation.md)；当前文档链接和附件检查可执行 `python scripts/check_docs.py`。
+本页保留首个设计提交的历史验证结果。后续 Rust 实现、真实 TCP 与进程故障检查见 [0.1.0 L0 实现报告](../reports/0.1.0-lab/validation.md)；迁移、维护和 Linux 实验的更新状态见 [M1 报告](../reports/m1/validation.md)。当前文档链接和附件检查可执行 `python scripts/check_docs.py`。
 
 日期：2026-09-21。环境：Windows / PowerShell 7.6.5，Emacs 31.1，Python 3.13.5。此记录只证明设计附件的静态可用性，不证明服务端、协议互通或生产可靠性。
 

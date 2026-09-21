@@ -41,7 +41,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | EHLO/HELO、MAIL、RCPT、DATA、RSET、NOOP、QUIT | 简化 ASCII dot-atom 信封；非完整 SMTP 一致性声明 |
 | SIZE、8BITMIME、严格 CRLF 与点转义 | 不支持 SMTPUTF8、AUTH、STARTTLS、PIPELINING |
 | 25 MiB 有界流式收信、多收件人配额原子提交 | 无 MIME 语义处理；不添加 Received/Return-Path 头；仅合成实验邮件 |
-| 原文文件 + WAL/FULL 元数据、内部幂等键 | Linux 目录同步；Windows 只用于开发；断电可靠性未验收 |
+| 原文文件 + WAL/FULL 元数据、内部幂等键 | Linux ext4/QEMU 断电及实际磁盘满实验通过；物理掉电与生产存储栈待验收；Windows 只用于开发 |
 | 账号创建、分页列信、原文导出、完整性检查、离线 GC | GC 默认预览；仅回收无引用文件，不过期删除邮箱或投递历史 |
 | schema 1→2 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
 
@@ -72,7 +72,8 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [deploy/rustymail.example.toml](deploy/rustymail.example.toml) | 完整配置契约；`check` 可验证；扫描必需，因此不能用来启动实验接收器 |
 | [deploy/rustymail.service.in](deploy/rustymail.service.in) | 未来 Linux 服务模板；当前不可直接启动 |
 | [存储迁移](crates/store/migrations/0002.sql) | 当前 `user_version=2`，加入迁移与维护记录；保留所有已接受邮件 |
-| [实现验证报告](reports/0.1.0-lab/validation.md) | 当前实现的测试、故障模型、依赖和已知限制 |
+| [第一轮验证报告](reports/0.1.0-lab/validation.md) | 0.1.0 的历史测试、依赖和进程故障证据 |
+| [M1 验证报告](reports/m1/validation.md) | 0.2.0 的迁移、维护、Linux VM 故障与性能原始数据 |
 | [验证记录](docs/validation.md) | 本次实际运行的检查，以及仍未执行的验证 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。
