@@ -19,6 +19,8 @@
 
 一封消息发给多个本地收件人时可以共享同一不可变文件，但每个邮箱都有独立 UID、flags 和配额记账。邮件原文是最终存储字节，所有 MIME offset 对应这一版本；更新 DKIM 或增加头部会产生新版本，不能沿用旧 offset。
 
+0.5.0 在同一 staging 流里构造本地交付表示：增加本机 Received/Return-Path、清除旧 Return-Path，之后计算最终摘要和配额。客户端输入与最终大小分开计数；不保存额外整封输入副本，不改写历史 blob，详细边界见 [M3.2 教程](15-m3-local-delivery.md)。未来 MIME offset 必须从该最终版本生成，当前尚未解析 MIME。
+
 ## 2. 数据模型
 
 [schema.sql](examples/schema.sql) 是可供 SQLite 执行的结构草案；L0 已将其转换为[首个迁移](../crates/store/migrations/0001.sql)。0.2.0 使用 `PRAGMA user_version=2`，加入迁移摘要、维护执行和 GC 动作记录，实现账号、本地接受、配额、原文检查、离线 orphan GC 和精确副本恢复，操作见 [M1 教程](11-m1-storage.md)。队列执行、IMAP 和已接受消息的历史过期尚未实现；下文继续定义完整目标。核心关系如下：

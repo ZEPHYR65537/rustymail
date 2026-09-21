@@ -14,6 +14,7 @@ import ssl
 import subprocess
 import tempfile
 import time
+from delivery_assertions import delivery_content
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -241,8 +242,9 @@ def main():
             message=json.loads(messages.stdout)
             exported=base/'accepted.eml'
             ctl('mail','export','bob@example.com',message['message_id'],'--output',str(exported))
-            assert exported.read_bytes()==raw
-            completed.append('only authorized message persisted; export byte-exact after restart')
+            content, _ = delivery_content(exported.read_bytes(), 'alice@example.com', 'ESMTPSA')
+            assert content == raw
+            completed.append('only authorized message persisted; final trace and retained client bytes verified after restart')
         finally:
             stop();log.close()
         logs=log_path.read_text(encoding='utf-8')

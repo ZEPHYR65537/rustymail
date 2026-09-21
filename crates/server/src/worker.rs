@@ -28,7 +28,8 @@ pub struct StoreWorker {
 
 pub fn store_options(config: &Config) -> StoreOptions {
     StoreOptions {
-        max_message_bytes: config.limits.message_bytes,
+        max_message_bytes: config.limits.message_bytes
+            + rustymail_core::LOCAL_DELIVERY_OVERHEAD_BYTES,
         stream_buffer_bytes: config.limits.stream_buffer_bytes,
         disk_reserve_bytes: config.limits.disk_reserve_bytes,
         disk_reserve_percent: config.limits.disk_reserve_percent,

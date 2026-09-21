@@ -5,6 +5,7 @@ mod auth_dialog;
 mod logging;
 mod revocation;
 pub mod tls;
+mod trace;
 mod transport;
 mod worker;
 pub use logging::{flush_logs, log_event, start_logging};
@@ -49,6 +50,8 @@ pub enum ServerError {
     Io(#[from] io::Error),
     #[error("server task failed")]
     Task,
+    #[error("invalid message header structure")]
+    InvalidHeaders,
 }
 
 pub struct LabServer {
@@ -199,7 +202,8 @@ impl LabServer {
         let management = Arc::new(Semaphore::new(4));
         // Reserving worst-case message size bounds temporary bytes as well as
         // the number of active DATA streams. All permits live through commit.
-        let slots = (self.config.limits.temporary_reserved_bytes / self.config.limits.message_bytes)
+        let slots = (self.config.limits.temporary_reserved_bytes
+            / store_options(&self.config).max_message_bytes)
             .min(self.config.limits.ingest_concurrency as u64) as usize;
         let ingest = Arc::new(Semaphore::new(slots));
         let counts = Arc::new(Mutex::new(HashMap::<IpAddr, usize>::new()));
@@ -656,6 +660,22 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                         continue;
                     }
                 };
+                // Generate once per DATA transaction. The same operation ID is
+                // persisted with the exact prepared bytes; never regenerate on replay.
+                let operation = Uuid::new_v4();
+                let prefix = trace::Trace {
+                    hostname: &config.hostname,
+                    greeting: state.greeting(),
+                    peer,
+                    extended: state.extended(),
+                    encrypted,
+                    authenticated: principal.is_some(),
+                }
+                .prefix(
+                    envelope.sender.as_ref(),
+                    operation,
+                    time::OffsetDateTime::now_utc(),
+                )?;
                 reply(
                     &mut write,
                     Reply::new(354, "Send message; end with <CRLF>.<CRLF>"),
@@ -663,7 +683,7 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                 .await?;
                 let receiving = tokio::select! {
                     _=revocations.wait(principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
-                    result=timeout(Duration::from_secs(config.timeouts.data_total_seconds),receive_message(&mut read,stage,&config,auth.is_some()))=>result,
+                    result=timeout(Duration::from_secs(config.timeouts.data_total_seconds),receive_message(&mut read,stage,&config,auth.is_some(),&prefix))=>result,
                 };
                 let (message, author) = match receiving {
                     Ok(Ok(message)) => message,
@@ -683,6 +703,10 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                         .await?;
                         return Ok(());
                     }
+                    Ok(Err(ServerError::InvalidHeaders)) => {
+                        reply(&mut write, Reply::new(550, "5.6.0 Invalid message headers")).await?;
+                        return Ok(());
+                    }
                     _ => {
                         let _ = reply(
                             &mut write,
@@ -695,7 +719,7 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                 // The result is ambiguous after dispatch if the reply channel
                 // fails or times out. In that case close without a false 4xx.
                 let Envelope { sender, recipients } = envelope;
-                let operation_id = Uuid::new_v4().simple().to_string();
+                let operation_id = operation.simple().to_string();
                 let plan = Acceptance {
                     operation_id: operation_id.clone(),
                     sender,
@@ -794,11 +818,15 @@ async fn receive_message<R: AsyncRead + Unpin>(
     mut stage: StagedMessage,
     config: &Config,
     submission: bool,
+    prefix: &str,
 ) -> Result<(PreparedMessage, Option<rustymail_core::Address>), ServerError> {
     let mut in_headers = true;
     let mut headers = 0usize;
+    let mut input_bytes = 0u64;
+    let mut filter = trace::HeaderFilter::default();
     let mut identities = SubmissionHeaders::default();
     let mut decoder = LineDecoder::new(1001);
+    stage.append(prefix.as_bytes()).await?;
     loop {
         decoder.clear();
         // One extra octet is permitted for SMTP transparency. The decoded line
@@ -823,8 +851,17 @@ async fn receive_message<R: AsyncRead + Unpin>(
             } else {
                 None
             };
+            if in_headers {
+                // Empty or header-only input has an empty body. This separator
+                // belongs to the bounded server overhead, not client SIZE.
+                stage.append(b"\r\n").await?;
+            }
             return Ok((stage.prepare().await?, author));
         };
+        input_bytes = input_bytes
+            .checked_add(data.len() as u64)
+            .filter(|size| *size <= config.limits.message_bytes)
+            .ok_or(StoreError::SizeLimit)?;
         if in_headers {
             headers = headers
                 .checked_add(data.len())
@@ -834,8 +871,14 @@ async fn receive_message<R: AsyncRead + Unpin>(
             }
             if data == b"\r\n" {
                 in_headers = false;
-            } else if submission {
-                identities.line(data)?;
+            } else {
+                let retain = filter.retain(data)?;
+                if submission {
+                    identities.line(data)?;
+                }
+                if !retain {
+                    continue;
+                }
             }
         }
         stage.append(data).await?;

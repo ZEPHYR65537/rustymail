@@ -247,7 +247,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             for message in messages {
                 let mut bytes = Vec::new();
                 store.export(&address(), &message.message_id, &mut bytes)?;
-                if bytes != RAW {
+                let content = if point == "acknowledged" && message.uid == 2 {
+                    // Only the SMTP-delivered candidate has local trace fields.
+                    // The storage-layer seed remains the original immutable blob.
+                    let prefix_size = bytes
+                        .len()
+                        .checked_sub(RAW.len())
+                        .ok_or("missing content")?;
+                    let prefix = std::str::from_utf8(&bytes[..prefix_size])?;
+                    if !prefix
+                        .starts_with("Return-Path: <>\r\nReceived: from test ([127.0.0.1])\r\n")
+                        || !prefix.contains(" with ESMTP\r\n\tid ")
+                        || !prefix.ends_with(" +0000\r\n")
+                        || prefix_size as u64 > rustymail_core::LOCAL_DELIVERY_OVERHEAD_BYTES
+                    {
+                        return Err("recovered local trace differs".into());
+                    }
+                    &bytes[prefix_size..]
+                } else {
+                    bytes.as_slice()
+                };
+                if content != RAW {
                     return Err("recovered raw bytes differ".into());
                 }
             }

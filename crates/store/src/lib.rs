@@ -77,6 +77,7 @@ pub enum StoreError {
 
 #[derive(Clone, Debug)]
 pub struct StoreOptions {
+    /// Maximum final stored bytes, including any caller-generated trace fields.
     pub max_message_bytes: u64,
     pub stream_buffer_bytes: usize,
     pub disk_reserve_bytes: u64,
@@ -202,7 +203,8 @@ impl Store {
             return Err(StoreError::NotFound);
         }
         if options.max_message_bytes == 0
-            || options.max_message_bytes > 25 * 1024 * 1024
+            || options.max_message_bytes
+                > 25 * 1024 * 1024 + rustymail_core::LOCAL_DELIVERY_OVERHEAD_BYTES
             || !(1024..=65536).contains(&options.stream_buffer_bytes)
             || options.disk_reserve_percent >= 100
             || options.cache_kib > 65536

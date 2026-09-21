@@ -17,6 +17,7 @@ import subprocess
 import sqlite3
 import tempfile
 import time
+from delivery_assertions import delivery_content
 
 
 def main():
@@ -105,15 +106,19 @@ def main():
             stored = json.loads(listing[0])
             exported = base / "recovered.eml"
             run(control, "mail", "export", "alice@example.com", stored["message_id"], "--output", str(exported))
-            assert exported.read_bytes() == raw, "Byte-exact message did not survive forced exit"
+            stored_raw = exported.read_bytes()
+            content, trace_id = delivery_content(stored_raw, "sender@remote.test", "ESMTP")
+            assert content == raw, "Retained client bytes did not survive forced exit"
+            assert stored['size_bytes'] == len(stored_raw)
             run(control, "mail", "export", "alice@example.com", stored["message_id"], "--output", str(exported), success=False)
-            assert exported.read_bytes() == raw, "Existing export must not be overwritten"
+            assert exported.read_bytes() == stored_raw, "Existing export must not be overwritten"
             health = json.loads(run(control, "check-store").stdout)
             assert health["healthy"] and health["referenced_blobs"] == 1
 
             accepted = [json.loads(line)["fields"] for line in log_path.read_text(encoding="utf-8").splitlines()
                         if json.loads(line).get("event") == "message_accepted"][-1]
             operation = json.loads(run(control, "operation", accepted["operation_id"]).stdout)["operation"]
+            assert trace_id == accepted["operation_id"]
             assert operation["message_id"] == stored["message_id"]
             # Construct a legacy-schema fixture only inside this script's fresh
             # temporary store, after stopping the server. Preserve all mail rows.
@@ -137,7 +142,7 @@ def main():
             assert collected["deleted"] == 2 and not orphan.exists() and not stale.exists()
             assert json.loads(run(control, "gc-history").stdout)["runs"][0]["status"] == "complete"
             blob = base / "mail/blobs" / (operation["blob_id"] + ".eml")
-            assert blob.parent == base / "mail/blobs" and blob.read_bytes() == raw
+            assert blob.parent == base / "mail/blobs" and blob.read_bytes() == stored_raw
             blob.unlink()  # Synthetic missing-blob fixture; byte-exact copy retained above.
             assert not json.loads(run(control, "check-store", success=False).stdout)["healthy"]
             wrong = base / "wrong.eml"
@@ -145,7 +150,7 @@ def main():
             run(control, "recover-blob", operation["blob_id"], "--source", str(wrong), success=False)
             assert not blob.exists()
             run(control, "recover-blob", operation["blob_id"], "--source", str(exported))
-            assert blob.read_bytes() == raw
+            assert blob.read_bytes() == stored_raw
             run(control, "recover-blob", operation["blob_id"], "--source", str(exported), success=False)
             run(control, "checkpoint")
             assert json.loads(run(control, "check-store").stdout)["healthy"]

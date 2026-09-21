@@ -1,6 +1,10 @@
 //! Shared configuration and deliberately narrow, validated identifiers.
 pub mod config;
 
+/// Fixed extra storage reservation for local SMTP trace fields and a possible
+/// missing header/body separator. Not part of the client-facing SIZE limit.
+pub const LOCAL_DELIVERY_OVERHEAD_BYTES: u64 = 2048;
+
 use std::fmt;
 use thiserror::Error;
 

@@ -13,6 +13,7 @@ import ssl
 import subprocess
 import tempfile
 import time
+from delivery_assertions import delivery_content
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -296,12 +297,21 @@ def main():
         messages = [json.loads(line) for line in result.stdout.splitlines()]
         assert len(messages) == 4
         exported = []
+        trace_protocols = Counter()
         for index, message in enumerate(messages):
             path = base/f'accepted-{index}.eml'
             ctl('mail','export','bob@example.com',message['message_id'],'--output',str(path))
-            exported.append(path.read_bytes())
+            blob = path.read_bytes()
+            sender = ('alice@example.com' if blob.startswith(b'Return-Path: <alice@example.com>')
+                      else '' if blob.startswith(b'Return-Path: <>') else 'sender@remote.test')
+            content, _ = delivery_content(blob, sender)
+            trace_protocols[(sender, blob.split(b'\r\n', 3)[2].split(b' with ')[1])] += 1
+            assert message['size_bytes'] == len(blob)
+            exported.append(content)
         assert Counter(exported) == Counter([raw_receive, raw_receive, raw_submit, raw_submit])
-        checks.append('restart preserves exactly four accepted messages with byte-exact export; all negatives leave no accepted message')
+        assert trace_protocols == Counter({('sender@remote.test', b'ESMTP'): 1,
+                                          ('', b'ESMTPS'): 1, ('alice@example.com', b'ESMTPSA'): 2})
+        checks.append('restart preserves exactly four accepted messages with valid final trace and byte-exact retained content; all negatives leave no accepted message')
         logs = log_path.read_text(encoding='utf-8')
         assert token not in logs and auth_frame not in logs and '$argon2id$' not in logs
         assert 'Authenticated mail.' not in logs and 'EHLO injected' not in logs

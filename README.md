@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.4.0 / M3.1 L0 实验实现：已有存储恢复、身份与 TLS、三个 SMTP 入口角色及 STARTTLS。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或直接进入[入口与 STARTTLS 实验](docs/14-m3-starttls.md)。M3 的消息头责任和完整输入契约仍待完成。
+**当前是 0.5.0 / M3.2 L0 实验实现：已有存储恢复、身份/TLS、三个 SMTP 入口及最终本地交付头部。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或进入[本地交付实验](docs/15-m3-local-delivery.md)。M3.3 的完整输入契约与压力验收仍待完成。
 
 0.3.1 修复磁盘任务取消、撤销通知丢失和管理响应超限，复用 DATA 行缓冲并收紧组合资源预算。原理与保留限制见[取消与资源边界教程](docs/13-cancellation-and-bounds.md)，回归证据见[修复验证报告](reports/0.3.1/validation.md)。
 
@@ -46,7 +46,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | 隐式 TLS、AUTH PLAIN、Argon2id 应用密码 | 登录仅在 TLS 实验模式启用；散列并发/等待有界；无 LOGIN/OAuth |
 | send-as、权限 scope、事务内重新授权、撤销旧会话 | 提交只接受受限的单个 ASCII From；无完整 MIME 地址解析；只投递本地邮箱 |
 | Linux Unix socket 管理、对端身份校验、证书重载 | 只供本机管理员；Windows 使用离线管理；ACME 与证书临期告警待实现 |
-| 25 MiB 有界流式收信、多收件人配额原子提交 | 无 MIME 语义处理；不添加 Received/Return-Path 头；仅合成实验邮件 |
+| 25 MiB 有界流式收信、Received/Return-Path、多收件人原子交付 | 客户端上限外另预约 2 KiB；配额与导出以最终存储字节为准；无 MIME 语义处理 |
 | 原文文件 + WAL/FULL 元数据、内部幂等键 | Linux ext4/QEMU 断电及实际磁盘满实验通过；物理掉电与生产存储栈待验收；Windows 只用于开发 |
 | 账号创建、分页列信、原文导出、完整性检查、离线 GC | GC 默认预览；仅回收无引用文件，不过期删除邮箱或投递历史 |
 | schema 1→2 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
@@ -70,6 +70,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 13. [M2：TLS、身份、授权与本地管理](docs/12-m2-identity.md)：独立客户端实验、密码验证预算、事务内授权和异步取消的责任边界。
 14. [取消与资源边界](docs/13-cancellation-and-bounds.md)：从真实缺陷学习生命周期、通知、字节预算和性能证据。
 15. [M3.1：入口职责与 STARTTLS](docs/14-m3-starttls.md)：共享准入、协议切换、预读丢弃、状态重置及独立客户端反例。
+16. [M3.2：最终本地交付](docs/15-m3-local-delivery.md)：追踪字段、三种字节表示、流式过滤、共享文件和幂等重放。
 
 ## 配套文件
 

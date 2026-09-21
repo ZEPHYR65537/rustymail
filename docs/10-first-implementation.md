@@ -13,7 +13,7 @@ cargo build --workspace --locked
 python scripts/smoke.py
 ```
 
-预期输出是 JSON，包含 `"result": "passed"`。脚本使用临时目录、随机环回端口、`example.com` 测试地址；SMTP 客户端使用 Python 标准库，不复用 Rust parser。它会在 DATA 最终 250 后直接杀掉子进程，检查磁盘中的原文与发出的 MIME 字节完全一致，再重启服务器。Windows 子进程隐藏窗口；不会修改 Emacs 配置或访问外部邮箱。
+预期输出是 JSON，包含 `"result": "passed"`。脚本使用临时目录、随机环回端口、`example.com` 测试地址；SMTP 客户端使用 Python 标准库，不复用 Rust parser。它在最终 250 后杀掉子进程，再检查并恢复存储。0.1.0 当时整个导出等于客户端字节；0.5.0 起改为验证新交付头部及保留内容，恢复副本须包含最终存储头部，见 [M3.2 教程](15-m3-local-delivery.md)。Windows 子进程隐藏窗口；不会修改 Emacs 配置或访问外部邮箱。
 
 手动运行方法见 [README](../README.md)。停止服务、列信后，将输出中的 `message_id` 代入：
 

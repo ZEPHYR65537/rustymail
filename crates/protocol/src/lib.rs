@@ -226,7 +226,7 @@ pub enum Action {
 /// No sockets, DNS, files or database calls: transitions can be exhaustively
 /// exercised without a runtime. RCPT lookup has an explicit completion step.
 pub struct Session {
-    greeted: bool,
+    greeting: Option<String>,
     extended: bool,
     transaction: Option<Envelope>,
     max_message_bytes: u64,
@@ -234,12 +234,18 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn greeting(&self) -> Option<&str> {
+        self.greeting.as_deref()
+    }
+    pub fn extended(&self) -> bool {
+        self.extended
+    }
     pub fn authentication_allowed(&self) -> bool {
         self.extended && self.transaction.is_none()
     }
     pub fn new(max_message_bytes: u64, max_recipients: usize) -> Self {
         Self {
-            greeted: false,
+            greeting: None,
             extended: false,
             transaction: None,
             max_message_bytes,
@@ -248,10 +254,11 @@ impl Session {
     }
 
     pub fn apply(&mut self, command: Command) -> Action {
+        let extended = matches!(command, Command::Ehlo(_));
         match command {
-            Command::Ehlo(_) | Command::Helo(_) => {
-                self.greeted = true;
-                self.extended = matches!(command, Command::Ehlo(_));
+            Command::Ehlo(name) | Command::Helo(name) => {
+                self.greeting = Some(name);
+                self.extended = extended;
                 self.transaction = None;
                 Action::Hello {
                     extended: self.extended,
@@ -269,7 +276,7 @@ impl Session {
             Command::Mail { sender, size } => {
                 // A failed new MAIL must never retain recipients from an older transaction.
                 self.transaction = None;
-                if !self.greeted {
+                if self.greeting.is_none() {
                     return Action::Reply(Reply::new(503, "5.5.1 Send HELO or EHLO first"));
                 }
                 if size.is_some_and(|n| n > self.max_message_bytes) {

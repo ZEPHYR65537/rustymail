@@ -310,7 +310,8 @@ impl Config {
         )?;
         require(
             l.disk_reserve_bytes > 0
-                && l.temporary_reserved_bytes >= l.message_bytes
+                && l.temporary_reserved_bytes
+                    >= l.message_bytes + crate::LOCAL_DELIVERY_OVERHEAD_BYTES
                 && l.temporary_reserved_bytes <= i64::MAX as u64,
             "invalid disk reservation limits",
         )?;
@@ -551,6 +552,10 @@ mod tests {
             ("synchronous = \"full\"", "synchronous = \"off\""),
             ("ingest_concurrency = 16", "ingest_concurrency = 0"),
             ("header_bytes = 262144", "header_bytes = 30000000"),
+            (
+                "temporary_reserved_bytes = 419430400",
+                "temporary_reserved_bytes = 26214400",
+            ),
             ("smtp = \"127.0.0.1:2525\"", "smtp = \"127.0.0.1:2465\""),
             (
                 "include_auth_payloads = false",

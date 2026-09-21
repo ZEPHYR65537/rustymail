@@ -177,7 +177,11 @@ async fn actual_tcp_receives_dot_stuffed_utf8_and_persists_after_restart() {
     store
         .export(&address, &messages[0].message_id, &mut output)
         .unwrap();
-    assert_eq!(output, raw.as_bytes());
+    assert!(output.starts_with(
+        b"Return-Path: <sender@remote.test>\r\nReceived: from test ([127.0.0.1])\r\n"
+    ));
+    assert!(output.ends_with(raw.as_bytes()));
+    assert_eq!(messages[0].size_bytes, output.len() as u64);
     assert!(store.check_integrity().unwrap().healthy());
 }
 
@@ -269,7 +273,8 @@ async fn rejects_relay_unknown_users_and_malformed_mail_clears_old_transaction()
 
 #[tokio::test]
 async fn multi_recipient_quota_failure_never_partially_delivers() {
-    let harness = Harness::start(1_000_000, 1, 1024).await;
+    // The input fits Bob's quota, but final trace + content does not.
+    let harness = Harness::start(1_000_000, 100, 1024).await;
     let mut client = Client::connect(harness.address).await;
     client.greet().await;
     client.envelope().await;
@@ -284,6 +289,103 @@ async fn multi_recipient_quota_failure_never_partially_delivers() {
     let (_directory, config) = harness.stop().await;
     let store = Store::open(&config.data_dir, store_options(&config)).unwrap();
     assert_eq!(store.check_integrity().unwrap().referenced_blobs, 0);
+}
+
+#[tokio::test]
+async fn local_delivery_shares_final_bytes_and_replays_only_identical_representation() {
+    let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    client.command("MAIL FROM:<>\r\n", 250).await;
+    for rcpt in ["alice@example.com", "bob@example.com", "ALICE@example.com"] {
+        client.command(&format!("RCPT TO:<{rcpt}>\r\n"), 250).await;
+    }
+    client.command("DATA\r\n", 354).await;
+    client.command("Return-Path: <forged@remote.test>\r\n\told continuation\r\nReceived: from old.test\r\n\tby previous.test; date\r\nRETURN-PATH: <>\r\nSubject: shared\r\n\r\nReturn-Path: body stays\r\n.\r\n", 250).await;
+    client.command("QUIT\r\n", 221).await;
+    drop(client);
+    let (_directory, config) = harness.stop().await;
+    let mut store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+    let alice = Address::parse("alice@example.com").unwrap();
+    let bob = Address::parse("bob@example.com").unwrap();
+    let a = store.list_messages(&alice, 0, 10).unwrap();
+    let b = store.list_messages(&bob, 0, 10).unwrap();
+    assert_eq!((a.len(), b.len()), (1, 1));
+    assert_eq!(a[0].message_id, b[0].message_id);
+    let mut bytes = Vec::new();
+    store.export(&alice, &a[0].message_id, &mut bytes).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(text.starts_with("Return-Path: <>\r\nReceived: from test ([127.0.0.1])\r\n"));
+    assert!(text.ends_with("Received: from old.test\r\n\tby previous.test; date\r\nSubject: shared\r\n\r\nReturn-Path: body stays\r\n"));
+    assert!(!text.contains("forged") && !text.contains("old continuation"));
+    assert!(
+        !text.contains(" for ")
+            && !text.contains("alice@example.com")
+            && !text.contains("bob@example.com")
+    );
+    let operation = text
+        .split("\r\n\tid ")
+        .nth(1)
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap();
+    let plan = rustymail_store::Acceptance {
+        operation_id: operation.to_owned(),
+        sender: None,
+        recipients: vec![alice.clone(), bob],
+    };
+    let mut replay = store.stage().unwrap();
+    replay.append(&bytes).await.unwrap();
+    let accepted = store
+        .accept(replay.prepare().await.unwrap(), plan.clone())
+        .unwrap();
+    assert!(accepted.already_committed);
+    assert_eq!(accepted.message_id, a[0].message_id);
+    let mut changed = store.stage().unwrap();
+    changed.append(&bytes).await.unwrap();
+    changed.append(b"changed\r\n").await.unwrap();
+    assert!(matches!(
+        store.accept(changed.prepare().await.unwrap(), plan),
+        Err(rustymail_store::StoreError::IdempotencyConflict)
+    ));
+    assert_eq!(store.list_messages(&alice, 0, 10).unwrap().len(), 1);
+    assert!(store.check_integrity().unwrap().healthy());
+}
+
+#[tokio::test]
+async fn exact_client_limit_excludes_generated_trace_and_empty_data_is_well_formed() {
+    let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
+    let mut client = Client::connect(harness.address).await;
+    client.greet().await;
+    // SIZE is an estimate, never the frame length. Actual input has its own bound.
+    client.command("MAIL FROM:<> SIZE=1\r\n", 250).await;
+    client.command("RCPT TO:<alice@example.com>\r\n", 250).await;
+    client.command("DATA\r\n", 354).await;
+    let raw = format!("\r\n{}\r\n{}\r\n", "x".repeat(998), "y".repeat(20));
+    assert_eq!(raw.len(), 1024);
+    client.command(&(raw.clone() + ".\r\n"), 250).await;
+    client.envelope().await;
+    client.command("DATA\r\n", 354).await;
+    client.command(".\r\n", 250).await;
+    client.command("QUIT\r\n", 221).await;
+    drop(client);
+    let (_directory, config) = harness.stop().await;
+    let store = Store::open(&config.data_dir, store_options(&config)).unwrap();
+    let alice = Address::parse("alice@example.com").unwrap();
+    let messages = store.list_messages(&alice, 0, 10).unwrap();
+    assert_eq!(messages.len(), 2);
+    let mut bytes = Vec::new();
+    store
+        .export(&alice, &messages[0].message_id, &mut bytes)
+        .unwrap();
+    assert!(bytes.ends_with(raw.as_bytes()) && bytes.len() > 1024);
+    bytes.clear();
+    store
+        .export(&alice, &messages[1].message_id, &mut bytes)
+        .unwrap();
+    assert!(bytes.ends_with(b"\r\n\r\n"));
+    assert!(store.check_integrity().unwrap().healthy());
 }
 
 #[tokio::test]
