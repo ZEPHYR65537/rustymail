@@ -375,6 +375,10 @@ impl Config {
             "invalid authentication concurrency/queue budget",
         )?;
         require(
+            u64::from(a.argon2_memory_kib) * a.concurrency as u64 <= 256 * 1024,
+            "combined Argon2 working memory must not exceed 256 MiB in this release",
+        )?;
+        require(
             (1..=4).contains(&self.parser_worker.concurrency)
                 && (32 * 1024 * 1024..=1024 * 1024 * 1024)
                     .contains(&self.parser_worker.memory_limit_bytes)
@@ -553,8 +557,21 @@ mod tests {
                 "include_auth_payloads = true",
             ),
             ("mode = \"lab\"", "mode = \"production\""),
+            ("argon2_memory_kib = 65536", "argon2_memory_kib = 1048576"),
         ] {
             assert!(Config::parse(&EXAMPLE.replace(old, new)).is_err(), "{new}");
         }
+        assert!(
+            Config::parse(
+                &EXAMPLE.replace("argon2_memory_kib = 65536", "argon2_memory_kib = 131072")
+            )
+            .is_ok()
+        );
+        assert!(
+            Config::parse(
+                &EXAMPLE.replace("argon2_memory_kib = 65536", "argon2_memory_kib = 131073")
+            )
+            .is_err()
+        );
     }
 }

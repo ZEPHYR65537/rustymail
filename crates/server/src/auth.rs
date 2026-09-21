@@ -67,6 +67,55 @@ struct RateEntry {
 struct Rates {
     ips: HashMap<IpAddr, RateEntry>,
     accounts: HashMap<String, RateEntry>,
+    last_cleanup: Instant,
+}
+
+impl Rates {
+    fn check(&mut self, ip: IpAddr, account: &str, now: Instant) -> Result<(), AuthError> {
+        let window = Duration::from_secs(60);
+        // Sweep at most once a second, including under a flood of rejected
+        // attempts. Accessed entries still reset at their exact window boundary.
+        if now.duration_since(self.last_cleanup) >= Duration::from_secs(1) {
+            self.ips
+                .retain(|_, entry| now.duration_since(entry.started) < window);
+            self.accounts
+                .retain(|_, entry| now.duration_since(entry.started) < window);
+            self.last_cleanup = now;
+        }
+        if (!self.ips.contains_key(&ip) && self.ips.len() >= 4096)
+            || (!self.accounts.contains_key(account) && self.accounts.len() >= 4096)
+        {
+            return Err(AuthError::Busy);
+        }
+        fn attempt(entry: &mut RateEntry, now: Instant) -> u32 {
+            if now.duration_since(entry.started) >= Duration::from_secs(60) {
+                *entry = RateEntry {
+                    started: now,
+                    attempts: 0,
+                };
+            }
+            entry.attempts = entry.attempts.saturating_add(1);
+            entry.attempts
+        }
+        let ip_attempts = attempt(
+            self.ips.entry(ip).or_insert(RateEntry {
+                started: now,
+                attempts: 0,
+            }),
+            now,
+        );
+        let account_attempts = attempt(
+            self.accounts.entry(account.into()).or_insert(RateEntry {
+                started: now,
+                attempts: 0,
+            }),
+            now,
+        );
+        if ip_attempts > 30 || account_attempts > 10 {
+            return Err(AuthError::Busy);
+        }
+        Ok(())
+    }
 }
 pub struct AuthService {
     settings: Authentication,
@@ -153,42 +202,17 @@ impl AuthService {
             rates: Mutex::new(Rates {
                 ips: HashMap::new(),
                 accounts: HashMap::new(),
+                last_cleanup: Instant::now(),
             }),
             changes,
         }))
     }
 
     fn rate(&self, ip: IpAddr, account: &str) -> Result<(), AuthError> {
-        let now = Instant::now();
-        let mut rates = self.rates.lock().map_err(|_| AuthError::Busy)?;
-        rates
-            .ips
-            .retain(|_, v| now.duration_since(v.started) < Duration::from_secs(60));
-        rates
-            .accounts
-            .retain(|_, v| now.duration_since(v.started) < Duration::from_secs(60));
-        if (!rates.ips.contains_key(&ip) && rates.ips.len() >= 4096)
-            || (!rates.accounts.contains_key(account) && rates.accounts.len() >= 4096)
-        {
-            return Err(AuthError::Busy);
-        }
-        let ip_allowed = {
-            let entry = rates.ips.entry(ip).or_insert(RateEntry {
-                started: now,
-                attempts: 0,
-            });
-            entry.attempts = entry.attempts.saturating_add(1);
-            entry.attempts <= 30
-        };
-        let entry = rates.accounts.entry(account.into()).or_insert(RateEntry {
-            started: now,
-            attempts: 0,
-        });
-        entry.attempts = entry.attempts.saturating_add(1);
-        if !ip_allowed || entry.attempts > 10 {
-            return Err(AuthError::Busy);
-        }
-        Ok(())
+        self.rates
+            .lock()
+            .map_err(|_| AuthError::Busy)?
+            .check(ip, account, Instant::now())
     }
 
     async fn permits(&self) -> Result<(OwnedSemaphorePermit, OwnedSemaphorePermit), AuthError> {
@@ -260,6 +284,27 @@ impl AuthService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rate_window_expiry_does_not_wait_for_the_next_sweep() {
+        let now = Instant::now();
+        let mut rates = Rates {
+            ips: HashMap::new(),
+            accounts: HashMap::new(),
+            last_cleanup: now,
+        };
+        let ip = "127.0.0.1".parse().unwrap();
+        for _ in 0..10 {
+            rates.check(ip, "alice@example.com", now).unwrap();
+        }
+        assert!(rates.check(ip, "alice@example.com", now).is_err());
+        rates
+            .check(ip, "bob@example.com", now + Duration::from_millis(59900))
+            .unwrap();
+        rates
+            .check(ip, "alice@example.com", now + Duration::from_secs(60))
+            .unwrap();
+    }
     fn settings() -> Authentication {
         rustymail_core::config::Config::parse(include_str!("../../../deploy/rustymail.lab.toml"))
             .unwrap()

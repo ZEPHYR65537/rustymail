@@ -9,6 +9,7 @@ import re
 import shutil
 import smtplib
 import socket
+import sqlite3
 import ssl
 import subprocess
 import tempfile
@@ -77,6 +78,17 @@ def main():
         before=ctl('credential','list','alice@example.com')
         assert len(before['credentials'])==1 and 'password_phc' not in json.dumps(before)
         completed.append('offline credential lifecycle and private one-time output')
+        # A separate account keeps the existing authentication scenarios intact.
+        # Seed pagination fixtures offline: hashing 100 unused passwords would
+        # measure Argon2 instead of management framing.
+        if os.name != 'nt':
+            ctl('account', 'add', 'listing@example.com')
+            with sqlite3.connect(base/'mail'/'meta.sqlite') as database:
+                account = database.execute("SELECT id FROM account WHERE login=?", ('listing@example.com',)).fetchone()[0]
+                phc = database.execute("SELECT password_phc FROM credential LIMIT 1").fetchone()[0]
+                database.executemany(
+                    "INSERT INTO credential(account_id,selector,label,password_phc,scope,created_at_ms) VALUES(?,?,?,?,?,?)",
+                    [(account, f'{index+1000:032x}', '"\\'*40, phc, 'read_only', 0) for index in range(100)])
         context=ssl.create_default_context(cafile=str(certificates/'ca.pem'))
         log_path=base/'server.log'
         log=log_path.open('wb')
@@ -170,6 +182,9 @@ def main():
                 assert socket_path.stat().st_mode & 0o077 == 0
                 assert socket_path.parent.stat().st_mode & 0o077 == 0
                 assert ctl('status',online=True)['mode']=='lab_tls'
+                page = ctl('credential', 'list', 'listing@example.com', '--limit', '100', online=True)['credentials']
+                assert len(page) == 100 and all(item['label'] == '"\\'*40 for item in page)
+                completed.append('100-entry credential page with maximum escaped labels crosses Unix management transport')
                 online_secret,_=credential('bob@example.com','online',online=True)
                 assert len(ctl('credential','list','bob@example.com',online=True)['credentials'])==2
                 ctl('send-as','bob@example.com','alice@example.com',online=True,success=False)

@@ -68,6 +68,8 @@ jobs:
         run: cargo build --workspace --release --locked
       - name: Measure native SMTP latency and daemon memory
         run: python scripts/benchmark.py
+      - name: Compare owned and reusable DATA framing
+        run: cargo run -p rustymail-protocol --example framing --release --locked > reports/local/framing.json
       - name: Build static guest programs
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
@@ -83,6 +85,7 @@ jobs:
           name: m1-linux-evidence
           path: |
             reports/local/benchmark.json
+            reports/local/framing.json
             reports/local/powercut.json
             reports/local/failed-*.log
           if-no-files-found: warn

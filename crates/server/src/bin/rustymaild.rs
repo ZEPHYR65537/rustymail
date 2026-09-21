@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use rustymail_core::config::Config;
-use rustymail_server::{LabServer, log_event};
+use rustymail_server::{LabServer, flush_logs, log_event, start_logging};
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -29,7 +29,11 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run(Args::parse()).await {
+    if let Err(error) = start_logging() {
+        eprintln!("{error}");
+        return ExitCode::FAILURE;
+    }
+    let status = match run(Args::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             log_event(
@@ -38,7 +42,9 @@ async fn main() -> ExitCode {
             );
             ExitCode::FAILURE
         }
-    }
+    };
+    flush_logs().await;
+    status
 }
 
 async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {

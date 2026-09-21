@@ -14,6 +14,7 @@ pub enum FrameError {
 pub struct LineDecoder {
     buffer: Vec<u8>,
     limit: usize,
+    complete: bool,
 }
 
 impl LineDecoder {
@@ -21,12 +22,38 @@ impl LineDecoder {
         Self {
             buffer: Vec::with_capacity(limit),
             limit,
+            complete: false,
         }
     }
 
     /// Consume at most one line; the caller retains the unconsumed suffix.
     /// Returned lines exclude CRLF. Framing errors require closing the session.
     pub fn feed(&mut self, bytes: &[u8]) -> Result<(usize, Option<Vec<u8>>), FrameError> {
+        let (used, _) = self.feed_buffered(bytes)?;
+        Ok((used, self.take_line()))
+    }
+
+    /// Transfer a completed line without CRLF to its caller. Unlike `frame`,
+    /// this transfers the allocation too; the next input will allocate again.
+    pub fn take_line(&mut self) -> Option<Vec<u8>> {
+        if !self.complete {
+            return None;
+        }
+        self.complete = false;
+        let mut line = std::mem::take(&mut self.buffer);
+        line.truncate(line.len() - 2);
+        Some(line)
+    }
+
+    /// Keep the completed CRLF frame in reusable storage. Call `clear` after
+    /// consuming `frame`; no allocation is needed for each subsequent DATA line.
+    pub fn feed_buffered(&mut self, bytes: &[u8]) -> Result<(usize, bool), FrameError> {
+        if self.complete {
+            return Ok((0, true));
+        }
+        if self.buffer.capacity() < self.limit {
+            self.buffer.reserve_exact(self.limit - self.buffer.len());
+        }
         for (index, &byte) in bytes.iter().enumerate() {
             if self.buffer.len() == self.limit {
                 return Err(FrameError::TooLong);
@@ -39,12 +66,20 @@ impl LineDecoder {
             }
             self.buffer.push(byte);
             if byte == b'\n' {
-                let mut line = std::mem::replace(&mut self.buffer, Vec::with_capacity(self.limit));
-                line.truncate(line.len() - 2);
-                return Ok((index + 1, Some(line)));
+                self.complete = true;
+                return Ok((index + 1, true));
             }
         }
-        Ok((bytes.len(), None))
+        Ok((bytes.len(), false))
+    }
+
+    pub fn frame(&self) -> Option<&[u8]> {
+        self.complete.then_some(self.buffer.as_slice())
+    }
+
+    pub fn clear(&mut self) {
+        self.buffer.clear();
+        self.complete = false;
     }
 
     pub fn buffered_bytes(&self) -> usize {
@@ -298,9 +333,71 @@ pub fn decode_data_line(mut line: Vec<u8>) -> Result<Option<Vec<u8>>, FrameError
     Ok(Some(line))
 }
 
+/// Borrow a complete, already validated CRLF frame, including its line ending.
+/// SMTP transparency only advances the slice; it does not shift/copy the line.
+pub fn decode_data_frame(frame: &[u8]) -> Result<Option<&[u8]>, FrameError> {
+    if !frame.ends_with(b"\r\n") {
+        return Err(FrameError::InvalidLineEnding);
+    }
+    if frame == b".\r\n" {
+        return Ok(None);
+    }
+    let data = frame.strip_prefix(b".").unwrap_or(frame);
+    if data.len() > 1000 {
+        return Err(FrameError::TooLong);
+    }
+    Ok(Some(data))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_frames_preserve_chunk_boundaries_transparency_and_limits() {
+        let wire = b"..hello\r\n\r\n.\r\n";
+        for split in 0..=wire.len() {
+            let mut decoder = LineDecoder::new(1001);
+            let mut decoded = Vec::new();
+            for mut input in [&wire[..split], &wire[split..]] {
+                while !input.is_empty() {
+                    let (used, complete) = decoder.feed_buffered(input).unwrap();
+                    input = &input[used..];
+                    if complete {
+                        decoded.push(
+                            decode_data_frame(decoder.frame().unwrap())
+                                .unwrap()
+                                .map(<[u8]>::to_vec),
+                        );
+                        decoder.clear();
+                    }
+                }
+            }
+            assert_eq!(
+                decoded,
+                [Some(b".hello\r\n".to_vec()), Some(b"\r\n".to_vec()), None]
+            );
+        }
+        let mut decoder = LineDecoder::new(1001);
+        let mut boundary = vec![b'.'];
+        boundary.extend(std::iter::repeat_n(b'x', 998));
+        boundary.extend_from_slice(b"\r\n");
+        assert!(decoder.feed_buffered(&boundary).unwrap().1);
+        assert_eq!(
+            decode_data_frame(decoder.frame().unwrap())
+                .unwrap()
+                .unwrap()
+                .len(),
+            1000
+        );
+        decoder.clear();
+        boundary[0] = b'x';
+        assert!(decoder.feed_buffered(&boundary).unwrap().1);
+        assert_eq!(
+            decode_data_frame(decoder.frame().unwrap()),
+            Err(FrameError::TooLong)
+        );
+    }
 
     fn framed(chunks: &[&[u8]]) -> Result<Vec<Vec<u8>>, FrameError> {
         let mut decoder = LineDecoder::new(512);

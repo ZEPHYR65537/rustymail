@@ -133,7 +133,7 @@ enum MailCommand {
     },
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     match run(Args::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
@@ -473,7 +473,7 @@ async fn online_management(
     path: &std::path::Path,
     request: &AdminRequest,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    use rustymail_server::admin::{read_frame, write_frame};
+    use rustymail_server::admin::{FrameKind, read_frame, write_frame};
     use std::{
         os::unix::fs::{FileTypeExt, MetadataExt},
         time::Duration,
@@ -493,10 +493,18 @@ async fn online_management(
     }
     tokio::time::timeout(
         Duration::from_secs(5),
-        write_frame(&mut stream, &serde_json::to_value(request)?),
+        write_frame(
+            &mut stream,
+            &serde_json::to_value(request)?,
+            FrameKind::Request,
+        ),
     )
     .await??;
-    let bytes = tokio::time::timeout(Duration::from_secs(60), read_frame(&mut stream)).await??;
+    let bytes = tokio::time::timeout(
+        Duration::from_secs(60),
+        read_frame(&mut stream, FrameKind::Response),
+    )
+    .await??;
     let mut response: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| "invalid management response")?;
     if response["ok"] != true {

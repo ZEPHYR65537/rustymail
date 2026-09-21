@@ -2,11 +2,10 @@ use crate::{FaultPoint, InstanceLock, StorageRuntime, StoreError, StoreOptions};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use tokio::io::{AsyncWriteExt, BufWriter};
 use uuid::Uuid;
 
 pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
@@ -99,14 +98,13 @@ pub(crate) fn blob_path(root: &Path, id: &str) -> Result<PathBuf, StoreError> {
 pub struct StagedMessage {
     root: Arc<PathBuf>,
     id: String,
-    path: PathBuf,
-    writer: Option<BufWriter<tokio::fs::File>>,
+    resources: Arc<StageResources>,
+    buffer: Vec<u8>,
+    buffer_limit: usize,
     hash: Sha256,
     size: u64,
     max_size: u64,
     poisoned: bool,
-    reservation: Option<DiskReservation>,
-    lock: Arc<InstanceLock>,
     runtime: StorageRuntime,
 }
 
@@ -118,8 +116,51 @@ pub struct PreparedMessage {
     pub(crate) id: String,
     pub(crate) size: u64,
     pub(crate) hash: String,
-    _reservation: DiskReservation,
-    _lock: Arc<InstanceLock>,
+    _resources: Arc<StageResources>,
+}
+
+/// Every actual disk job owns this token, including after its waiter is gone.
+/// At most one write/prepare job per stage can be outstanding: cancellation
+/// poisons the stage before it can submit another job.
+struct StageResources {
+    disk: Mutex<StageDisk>,
+    path: PathBuf,
+    reservation: Option<DiskReservation>,
+    lock: Option<Arc<InstanceLock>>,
+}
+
+struct StageDisk {
+    file: Option<File>,
+    staged: bool,
+}
+
+impl Drop for StageResources {
+    fn drop(&mut self) {
+        let disk = self.disk.get_mut().unwrap_or_else(|e| e.into_inner());
+        let file = disk.file.take();
+        let path = disk.staged.then(|| std::mem::take(&mut self.path));
+        let reservation = self.reservation.take();
+        let lock = self.lock.take();
+        if file.is_none() && path.is_none() {
+            return; // Prepared: closed file, no staging name to clean up.
+        }
+        let cleanup = move || {
+            drop(file);
+            if let Some(path) = path {
+                let _ = fs::remove_file(path);
+            }
+            // Keep both tokens until close/unlink really finish. Cleanup jobs
+            // are bounded by the same reservation budget as active stages.
+            drop(lock);
+            drop(reservation);
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(cleanup);
+            }
+            Err(_) => cleanup(), // Store owner/offline caller, not a reactor.
+        }
+    }
 }
 
 struct DiskReservation {
@@ -171,22 +212,24 @@ impl StagedMessage {
         let path = root.join("staging").join(format!("{id}.part"));
         runtime.hit(FaultPoint::StageCreate)?;
         let file = private_file(&path, true)?;
-        let mut async_file = tokio::fs::File::from_std(file);
-        async_file.set_max_buf_size(options.stream_buffer_bytes);
         Ok(Self {
             root,
             id,
-            path,
-            writer: Some(BufWriter::with_capacity(
-                options.stream_buffer_bytes,
-                async_file,
-            )),
+            resources: Arc::new(StageResources {
+                disk: Mutex::new(StageDisk {
+                    file: Some(file),
+                    staged: true,
+                }),
+                path,
+                reservation: Some(reservation),
+                lock: Some(lock),
+            }),
+            buffer: Vec::with_capacity(options.stream_buffer_bytes),
+            buffer_limit: options.stream_buffer_bytes,
             hash: Sha256::new(),
             size: 0,
             max_size: options.max_message_bytes,
             poisoned: false,
-            reservation: Some(reservation),
-            lock,
             runtime,
         })
     }
@@ -203,13 +246,33 @@ impl StagedMessage {
             self.poisoned = true;
             return Err(StoreError::SizeLimit);
         };
-        let writer = self.writer.as_mut().ok_or(StoreError::PoisonedStage)?;
         // A cancelled write can leave partial bytes on disk. Only a completed
         // write restores this token, so later prepare cannot accept a stale hash.
         self.poisoned = true;
         self.runtime.hit(FaultPoint::Append)?;
-        if let Err(error) = writer.write_all(bytes).await {
-            return Err(error.into());
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            let count = remaining.len().min(self.buffer_limit - self.buffer.len());
+            self.buffer.extend_from_slice(&remaining[..count]);
+            remaining = &remaining[count..];
+            if self.buffer.len() == self.buffer_limit {
+                let mut buffer = std::mem::take(&mut self.buffer);
+                let resources = self.resources.clone();
+                self.buffer = tokio::task::spawn_blocking(move || {
+                    let mut disk = resources
+                        .disk
+                        .lock()
+                        .map_err(|_| StoreError::PoisonedStage)?;
+                    disk.file
+                        .as_mut()
+                        .ok_or(StoreError::PoisonedStage)?
+                        .write_all(&buffer)?;
+                    buffer.clear();
+                    Ok::<_, StoreError>(buffer)
+                })
+                .await
+                .map_err(|_| StoreError::WorkerUnavailable)??;
+            }
         }
         self.hash.update(bytes);
         self.size = size;
@@ -232,31 +295,34 @@ impl StagedMessage {
         if self.poisoned {
             return Err(StoreError::PoisonedStage);
         }
-        let mut writer = self.writer.take().ok_or(StoreError::PoisonedStage)?;
-        self.runtime.hit(FaultPoint::Flush)?;
-        writer.flush().await?;
-        self.runtime.hit(FaultPoint::FileSync)?;
-        writer.get_ref().sync_all().await?;
-        // Close before renaming on Windows, and wait for all Tokio file work.
-        let file = writer.into_inner().into_std().await;
-        drop(file);
-        hook("file_synced");
-        self.runtime.hit(FaultPoint::FileSynced)?;
         let root = self.root.clone();
         let id = self.id.clone();
-        let path = self.path.clone();
         let size = self.size;
         let hash = format!("{:x}", self.hash.clone().finalize());
-        let reservation = self.reservation.take().ok_or(StoreError::PoisonedStage)?;
-        let lock = self.lock.clone();
+        let buffer = std::mem::take(&mut self.buffer);
+        let resources = self.resources.clone();
         let runtime = self.runtime.clone();
         tokio::task::spawn_blocking(move || {
+            let mut disk = resources
+                .disk
+                .lock()
+                .map_err(|_| StoreError::PoisonedStage)?;
+            let writer = disk.file.as_mut().ok_or(StoreError::PoisonedStage)?;
+            runtime.hit(FaultPoint::Flush)?;
+            writer.write_all(&buffer)?;
+            runtime.hit(FaultPoint::FileSync)?;
+            writer.sync_all()?;
+            drop(disk.file.take()); // Close before rename, including on Windows.
+            hook("file_synced");
+            runtime.hit(FaultPoint::FileSynced)?;
             let destination = blob_path(&root, &id)?;
             if destination.exists() {
                 return Err(StoreError::InvalidId);
             }
             runtime.hit(FaultPoint::Rename)?;
-            fs::rename(&path, &destination)?;
+            fs::rename(&resources.path, &destination)?;
+            disk.staged = false;
+            drop(disk);
             hook("renamed");
             runtime.hit(FaultPoint::Renamed)?;
             runtime.hit(FaultPoint::BlobDirectorySync)?;
@@ -270,19 +336,10 @@ impl StagedMessage {
                 id,
                 size,
                 hash,
-                _reservation: reservation,
-                _lock: lock,
+                _resources: resources,
             })
         })
         .await
         .map_err(|_| StoreError::WorkerUnavailable)?
-    }
-}
-
-impl Drop for StagedMessage {
-    fn drop(&mut self) {
-        // Best effort cleanup only. Never delete a renamed/final blob here.
-        drop(self.writer.take());
-        let _ = fs::remove_file(&self.path);
     }
 }

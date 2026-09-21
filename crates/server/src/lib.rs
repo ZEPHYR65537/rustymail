@@ -1,14 +1,18 @@
 //! Laboratory SMTP service; production features are gated until implemented.
 pub mod admin;
 pub mod auth;
+mod auth_dialog;
+mod logging;
+mod revocation;
 pub mod tls;
 mod worker;
+pub use logging::{flush_logs, log_event, start_logging};
 pub use worker::store_options;
 use worker::{StoreClient, StoreWorker};
 
 use rustymail_core::config::{Config, ConfigError};
 use rustymail_protocol::{
-    Action, Command, Envelope, LineDecoder, ParseError, Reply, Session, decode_data_line,
+    Action, Command, Envelope, LineDecoder, ParseError, Reply, Session, decode_data_frame,
     parse_command,
 };
 use rustymail_store::{
@@ -43,10 +47,6 @@ pub enum ServerError {
     Io(#[from] io::Error),
     #[error("server task failed")]
     Task,
-}
-
-pub fn log_event(event: &str, fields: serde_json::Value) {
-    eprintln!("{}", serde_json::json!({"event":event,"fields":fields}));
 }
 
 pub struct LabServer {
@@ -241,11 +241,22 @@ async fn line<R: AsyncRead + Unpin>(
     limit: usize,
 ) -> io::Result<Option<Vec<u8>>> {
     let mut decoder = LineDecoder::new(limit);
+    if !fill_line(reader, &mut decoder).await? {
+        return Ok(None);
+    }
+    // Commands own their small buffer so AUTH can zeroize it independently.
+    Ok(decoder.take_line())
+}
+
+async fn fill_line<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+    decoder: &mut LineDecoder,
+) -> io::Result<bool> {
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
             return if decoder.buffered_bytes() == 0 {
-                Ok(None)
+                Ok(false)
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -253,12 +264,12 @@ async fn line<R: AsyncRead + Unpin>(
                 ))
             };
         }
-        let (used, result) = decoder
-            .feed(available)
+        let (used, complete) = decoder
+            .feed_buffered(available)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         reader.consume(used);
-        if result.is_some() {
-            return Ok(result);
+        if complete {
+            return Ok(true);
         }
     }
 }
@@ -304,6 +315,7 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
     if let Some(auth) = &auth {
         changes = auth.changes.subscribe();
     }
+    let mut revocations = revocation::Revocations::new(changes);
     let unauthenticated_deadline = tokio::time::Instant::now()
         + Duration::from_secs(config.timeouts.submission_unauthenticated_seconds);
     let mut auth_attempts = 0;
@@ -316,7 +328,7 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
             command_deadline
         };
         let incoming = tokio::select! {
-            _=wait_revoked(&mut changes,principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
+            _=revocations.wait(principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
             result=tokio::time::timeout_at(deadline,line(&mut read,if auth.is_some(){1024}else{512}))=>result,
         };
         let bytes = zeroize::Zeroizing::new(match incoming {
@@ -348,64 +360,14 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
                 .await?;
                 continue;
             }
-            let fields: Vec<_> = bytes.split(|&b| b == b' ').collect();
-            if !(2..=3).contains(&fields.len()) || !fields[1].eq_ignore_ascii_case(b"PLAIN") {
-                reply(&mut write, Reply::new(504, "5.5.4 Use AUTH PLAIN")).await?;
-                continue;
-            }
-            let encoded = if fields.len() == 3 {
-                zeroize::Zeroizing::new(fields[2].to_vec())
-            } else {
-                write_response(&mut write, b"334 \r\n").await?;
-                zeroize::Zeroizing::new(
-                    tokio::time::timeout_at(deadline, line(&mut read, 1024))
-                        .await
-                        .map_err(|_| timed_out())??
-                        .ok_or_else(|| io::Error::other("AUTH EOF"))?,
-                )
-            };
-            if encoded.as_slice() == b"*" {
-                reply(
-                    &mut write,
-                    Reply::new(501, "5.7.0 Authentication cancelled"),
-                )
-                .await?;
-                continue;
-            }
-            auth_attempts += 1;
-            let result = match auth::decode_plain(&encoded) {
-                Ok(credentials) => match tokio::time::timeout_at(
-                    deadline,
-                    auth.authenticate(&store, peer, credentials),
-                )
-                .await
-                {
-                    Ok(result) => result,
-                    Err(_) => Err(auth::AuthError::Busy),
-                },
-                Err(error) => Err(error),
-            };
-            match result {
-                Ok(identity) => {
-                    principal = Some(identity);
-                    reply(
-                        &mut write,
-                        Reply::new(235, "2.7.0 Authentication successful"),
-                    )
-                    .await?;
-                    log_event("authentication_succeeded", serde_json::json!({}));
-                }
-                Err(auth::AuthError::Denied) => {
-                    reply(&mut write, Reply::new(535, "5.7.8 Authentication failed")).await?;
-                    log_event("authentication_failed", serde_json::json!({}));
-                }
-                Err(auth::AuthError::Busy) => {
-                    reply(
-                        &mut write,
-                        Reply::new(454, "4.7.0 Authentication temporarily unavailable"),
-                    )
-                    .await?;
-                }
+            match auth_dialog::authenticate(
+                &mut read, &mut write, &bytes, auth, &store, peer, deadline,
+            )
+            .await?
+            {
+                auth_dialog::AuthOutcome::Authenticated(identity) => principal = Some(identity),
+                auth_dialog::AuthOutcome::Failed => auth_attempts += 1,
+                auth_dialog::AuthOutcome::Ignored => (),
             }
             if auth_attempts >= 5 && principal.is_none() {
                 return Ok(());
@@ -546,7 +508,7 @@ async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
                 )
                 .await?;
                 let receiving = tokio::select! {
-                    _=wait_revoked(&mut changes,principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
+                    _=revocations.wait(principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
                     result=timeout(Duration::from_secs(config.timeouts.data_total_seconds),receive_message(&mut read,stage,&config,auth.is_some()))=>result,
                 };
                 let (message, author) = match receiving {
@@ -651,17 +613,24 @@ async fn receive_message<R: AsyncRead + Unpin>(
     let mut in_headers = true;
     let mut headers = 0usize;
     let mut identities = SubmissionHeaders::default();
+    let mut decoder = LineDecoder::new(1001);
     loop {
+        decoder.clear();
         // One extra octet is permitted for SMTP transparency. The decoded line
         // including CRLF is checked against 1000 bytes separately.
-        let raw = timeout(
+        let complete = timeout(
             Duration::from_secs(config.timeouts.data_idle_seconds),
-            line(reader, 1001),
+            fill_line(reader, &mut decoder),
         )
         .await
-        .map_err(|_| timed_out())??
-        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete DATA"))?;
-        let data = decode_data_line(raw)
+        .map_err(|_| timed_out())??;
+        if !complete {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "incomplete DATA").into());
+        }
+        let frame = decoder
+            .frame()
+            .ok_or_else(|| io::Error::other("missing DATA frame"))?;
+        let data = decode_data_frame(frame)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let Some(data) = data else {
             let author = if submission {
@@ -681,33 +650,10 @@ async fn receive_message<R: AsyncRead + Unpin>(
             if data == b"\r\n" {
                 in_headers = false;
             } else if submission {
-                identities.line(&data)?;
+                identities.line(data)?;
             }
         }
-        stage.append(&data).await?;
-    }
-}
-
-async fn wait_revoked(
-    changes: &mut tokio::sync::watch::Receiver<u64>,
-    principal: Option<&Principal>,
-    store: &StoreClient,
-) {
-    let Some(principal) = principal else {
-        return std::future::pending().await;
-    };
-    loop {
-        if changes.changed().await.is_err() {
-            return;
-        }
-        let principal = principal.clone();
-        if !store
-            .call(move |store| store.principal_current(&principal))
-            .await
-            .unwrap_or(false)
-        {
-            return;
-        }
+        stage.append(data).await?;
     }
 }
 

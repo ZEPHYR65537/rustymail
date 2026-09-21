@@ -37,20 +37,69 @@ pub enum AdminRequest {
     ReloadTls,
 }
 
-pub async fn read_frame<R: AsyncRead + Unpin>(reader: R) -> io::Result<Zeroizing<Vec<u8>>> {
-    let mut bytes = Zeroizing::new(Vec::new());
-    BufReader::new(reader.take(16385))
+#[derive(Clone, Copy)]
+pub enum FrameKind {
+    Request,
+    Response,
+}
+
+impl FrameKind {
+    fn limit(self) -> usize {
+        match self {
+            Self::Request => 16 * 1024,
+            // Covers 100 credentials, 80-byte fully escaped labels and all
+            // integer fields at their maximum encoded lengths. Tested below.
+            Self::Response => 64 * 1024,
+        }
+    }
+}
+
+pub async fn read_frame<R: AsyncRead + Unpin>(
+    reader: R,
+    kind: FrameKind,
+) -> io::Result<Zeroizing<Vec<u8>>> {
+    let limit = kind.limit();
+    let mut bytes = Zeroizing::new(Vec::with_capacity(limit + 1));
+    BufReader::new(reader.take((limit + 1) as u64))
         .read_until(b'\n', &mut bytes)
         .await?;
-    if bytes.len() > 16384 || bytes.last() != Some(&b'\n') {
+    if bytes.len() > limit || bytes.last() != Some(&b'\n') {
         return Err(io::Error::other("invalid management frame"));
     }
     Ok(bytes)
 }
-pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, value: &Value) -> io::Result<()> {
-    let mut bytes = Zeroizing::new(serde_json::to_vec(value)?);
-    bytes.push(b'\n');
-    writer.write_all(&bytes).await?;
+struct EncodedFrame {
+    bytes: Zeroizing<Vec<u8>>,
+    limit: usize,
+}
+
+impl io::Write for EncodedFrame {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if bytes.len() > self.limit - self.bytes.len() {
+            return Err(io::Error::other("management response exceeds frame limit"));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+pub async fn write_frame<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    value: &Value,
+    kind: FrameKind,
+) -> io::Result<()> {
+    let mut frame = EncodedFrame {
+        bytes: Zeroizing::new(Vec::with_capacity(kind.limit())),
+        limit: kind.limit() - 1,
+    };
+    // Serialize through a bounded sink; do not allocate an oversized response
+    // before discovering it cannot be sent. No partial frame reaches the peer.
+    serde_json::to_writer(&mut frame, value)?;
+    frame.bytes.push(b'\n');
+    writer.write_all(&frame.bytes).await?;
     writer.flush().await
 }
 
@@ -270,9 +319,12 @@ pub(crate) async fn session(
             "management peer denied",
         ));
     }
-    let bytes = tokio::time::timeout(Duration::from_secs(5), read_frame(&mut stream))
-        .await
-        .map_err(|_| io::Error::other("management read timeout"))??;
+    let bytes = tokio::time::timeout(
+        Duration::from_secs(5),
+        read_frame(&mut stream, FrameKind::Request),
+    )
+    .await
+    .map_err(|_| io::Error::other("management read timeout"))??;
     let request = serde_json::from_slice::<AdminRequest>(&bytes);
     let response = SensitiveResponse(match request {
         Ok(request) => match dispatch(request, &store, &auth, &tls, &config).await {
@@ -286,8 +338,64 @@ pub(crate) async fn session(
     });
     tokio::time::timeout(
         Duration::from_secs(5),
-        write_frame(&mut stream, &response.0),
+        write_frame(&mut stream, &response.0, FrameKind::Response),
     )
     .await
     .map_err(|_| io::Error::other("management write timeout"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustymail_store::CredentialSummary;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn maximum_credential_page_survives_json_escaping_and_transport() {
+        let credentials: Vec<_> = (0..100)
+            .map(|i| CredentialSummary {
+                id: i64::MAX - i,
+                selector: "a".repeat(32),
+                label: "\"\\".repeat(40),
+                scope: "read_only".into(),
+                revoked_at_ms: Some(i64::MIN),
+                last_used_at_ms: Some(i64::MAX),
+            })
+            .collect();
+        let response = json!({"ok": true, "result": {"credentials": credentials}});
+        let (mut write, read) = tokio::io::duplex(FrameKind::Response.limit());
+        write_frame(&mut write, &response, FrameKind::Response)
+            .await
+            .unwrap();
+        let bytes = read_frame(read, FrameKind::Response).await.unwrap();
+        assert!(bytes.len() > FrameKind::Request.limit());
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), response);
+    }
+
+    #[tokio::test]
+    async fn oversized_frames_fail_before_writing_and_requests_keep_their_limit() {
+        for kind in [FrameKind::Request, FrameKind::Response] {
+            let (mut write, mut read) = tokio::io::duplex(64);
+            assert!(
+                write_frame(&mut write, &json!("x".repeat(kind.limit())), kind)
+                    .await
+                    .is_err()
+            );
+            drop(write);
+            let mut received = Vec::new();
+            read.read_to_end(&mut received).await.unwrap();
+            assert!(received.is_empty());
+        }
+        let oversized = vec![b'x'; FrameKind::Request.limit() + 1];
+        assert!(
+            read_frame(oversized.as_slice(), FrameKind::Request)
+                .await
+                .is_err()
+        );
+        assert!(
+            read_frame(b"{}".as_slice(), FrameKind::Request)
+                .await
+                .is_err()
+        );
+    }
 }

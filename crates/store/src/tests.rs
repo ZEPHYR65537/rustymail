@@ -75,8 +75,7 @@ fn cancelling_a_pending_append_poisoned_the_stage() {
         let _ = wait.recv();
     });
     started.recv_timeout(Duration::from_secs(10)).unwrap();
-    // Exceed Tokio File's internal write buffer as well as our BufWriter;
-    // write_all must wait for at least one queued filesystem operation.
+    // Exceed the bounded stage buffer and wait for a queued disk operation.
     let data = vec![b'x'; 4 * 1024 * 1024];
     let mut append = Box::pin(stage.append(&data));
     let pending = runtime.block_on(std::future::poll_fn(|cx| {
@@ -93,6 +92,118 @@ fn cancelling_a_pending_append_poisoned_the_stage() {
         runtime.block_on(stage.prepare()),
         Err(StoreError::PoisonedStage)
     ));
+}
+
+#[test]
+fn cancelled_disk_jobs_retain_reservation_and_lock_until_cleanup_finishes() {
+    use std::{future::Future, task::Poll, time::Duration};
+    // Exercise both a full-buffer write and preparation of a partial buffer.
+    for prepare in [false, true] {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        let directory = private_test_directory();
+        let mut opts = options();
+        opts.temporary_reserved_bytes = opts.max_message_bytes;
+        let store = Store::open(directory.path(), opts.clone()).unwrap();
+        let mut stage = store.stage().unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let (ready, started) = std::sync::mpsc::channel();
+        let blocker = runtime.spawn_blocking(move || {
+            ready.send(()).unwrap();
+            wait.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let pending = if prepare {
+            runtime.block_on(stage.append(b"partial")).unwrap();
+            let mut operation = Box::pin(stage.prepare());
+            let pending = runtime.block_on(std::future::poll_fn(|cx| {
+                Poll::Ready(operation.as_mut().poll(cx).is_pending())
+            }));
+            drop(operation);
+            pending
+        } else {
+            let payload = vec![b'x'; opts.stream_buffer_bytes * 2];
+            let mut operation = Box::pin(stage.append(&payload));
+            let pending = runtime.block_on(std::future::poll_fn(|cx| {
+                Poll::Ready(operation.as_mut().poll(cx).is_pending())
+            }));
+            drop(operation);
+            drop(stage);
+            pending
+        };
+        let reserved = matches!(store.stage(), Err(StoreError::DiskReserve));
+        let reservations = store.reserved_bytes.clone();
+        drop(store);
+        let locked = matches!(
+            Store::open(directory.path(), opts.clone()),
+            Err(StoreError::Locked)
+        );
+        // Unblock before asserting, so a failed regression does not hang teardown.
+        release.send(()).unwrap();
+        runtime.block_on(blocker).unwrap();
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while *reservations.lock().unwrap() != 0 {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+        });
+        assert!(
+            pending && reserved && locked,
+            "prepare={prepare}: all jobs must retain both tokens"
+        );
+        let reopened = Store::open(directory.path(), opts).unwrap();
+        assert!(reopened.check_integrity().unwrap().healthy());
+    }
+}
+
+#[tokio::test]
+async fn cancelling_running_prepare_keeps_lock_and_leaves_only_an_orphan() {
+    use std::{sync::Arc, time::Duration};
+    let directory = private_test_directory();
+    let mut opts = options();
+    opts.temporary_reserved_bytes = opts.max_message_bytes;
+    let store = Store::open(directory.path(), opts.clone()).unwrap();
+    let reserved = Arc::clone(&store.reserved_bytes);
+    let mut stage = store.stage().unwrap();
+    stage.append(RAW).await.unwrap();
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    let entered = std::sync::Mutex::new(Some(entered));
+    let (release, wait) = std::sync::mpsc::channel();
+    let task = tokio::spawn(stage.prepare_with_hook(move |point| {
+        if point == "file_synced" {
+            entered.lock().unwrap().take().unwrap().send(()).unwrap();
+            wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+    }));
+    ready.await.unwrap();
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    let no_capacity = matches!(store.stage(), Err(StoreError::DiskReserve));
+    drop(store);
+    let locked = matches!(
+        Store::open(directory.path(), opts.clone()),
+        Err(StoreError::Locked)
+    );
+    release.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while *reserved.lock().unwrap() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(no_capacity && locked);
+    let reopened = Store::open(directory.path(), opts).unwrap();
+    let report = reopened.check_integrity().unwrap();
+    assert!(report.healthy());
+    assert_eq!(report.referenced_blobs, 0);
+    assert_eq!(report.orphan_blobs, 1);
 }
 
 #[tokio::test]

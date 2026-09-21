@@ -8,8 +8,6 @@ use tokio::sync::{mpsc, oneshot};
 
 enum Request {
     Call(Box<dyn FnOnce(&mut Store) + Send>),
-    Recipient(Address, oneshot::Sender<Result<bool, StoreError>>),
-    Stage(oneshot::Sender<Result<StagedMessage, StoreError>>),
     Accept(
         PreparedMessage,
         Acceptance,
@@ -69,12 +67,6 @@ impl StoreWorker {
                 while let Some(request) = receiver.blocking_recv() {
                     match request {
                         Request::Call(call) => call(&mut store),
-                        Request::Recipient(address, reply) => {
-                            let _ = reply.send(store.recipient_exists(&address));
-                        }
-                        Request::Stage(reply) => {
-                            let _ = reply.send(store.stage());
-                        }
                         Request::Accept(message, plan, identity, reply) => {
                             // Once dispatched, acceptance finishes even if the
                             // client disconnects and drops its oneshot receiver.
@@ -137,21 +129,12 @@ impl StoreClient {
         result.await.map_err(|_| StoreError::WorkerUnavailable)?
     }
     pub async fn recipient_exists(&self, address: Address) -> Result<bool, StoreError> {
-        let (reply, result) = oneshot::channel();
-        self.sender
-            .send(Request::Recipient(address, reply))
+        self.call(move |store| store.recipient_exists(&address))
             .await
-            .map_err(|_| StoreError::WorkerUnavailable)?;
-        result.await.map_err(|_| StoreError::WorkerUnavailable)?
     }
 
     pub async fn stage(&self) -> Result<StagedMessage, StoreError> {
-        let (reply, result) = oneshot::channel();
-        self.sender
-            .send(Request::Stage(reply))
-            .await
-            .map_err(|_| StoreError::WorkerUnavailable)?;
-        result.await.map_err(|_| StoreError::WorkerUnavailable)?
+        self.call(|store| store.stage()).await
     }
 
     pub async fn accept(
