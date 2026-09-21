@@ -604,7 +604,7 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                     config.limits.recipients_per_message,
                 );
                 principal = None;
-                // No second SMTP banner: the next bytes must be a fresh EHLO.
+                // No second SMTP banner; the client should send a fresh EHLO.
             }
             Action::Quit => {
                 reply(&mut write, Reply::new(221, "2.0.0 Bye")).await?;

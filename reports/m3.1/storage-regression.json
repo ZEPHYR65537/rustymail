@@ -1,0 +1,280 @@
+{
+  "revision": "83caa0030bae27f3c77f3d2173782df8732f4f23",
+  "kernel": "6.8.0-139-generic",
+  "kernel_sha256": "0066409132868538bc0c9076f60131025775d5bbd8617df074d059f91b584918",
+  "qemu": "QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)",
+  "filesystem": "ext4, 128 MiB dedicated raw image, reserved blocks 0%",
+  "guest_memory_mib": 512,
+  "guest_cpus": 2,
+  "accelerator": "TCG",
+  "disk_cache": "writeback, flushes honored",
+  "fault_model": "SIGKILL QEMU; guest memory lost, host OS/storage stay alive; no physical power-loss claim",
+  "results": [
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "staged",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"staged\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 1,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "file_synced",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":1,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"file_synced\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 1,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "renamed",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":1,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"renamed\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "directories_synced",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":1,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"directories_synced\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "before_commit",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":1,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"before_commit\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 2,
+      "point": "after_commit",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":2,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":2,\"point\":\"after_commit\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "migration_applied",
+      "schema": 2,
+      "version_before_reopen": 1,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"migration_applied\",\"schema\":2,\"version_before_reopen\":1}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "migration_committed",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"migration_committed\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "gc_planned",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":1,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"gc_planned\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "gc_unlinked",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":1,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"gc_unlinked\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 2,
+      "point": "acknowledged",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":2,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":2,\"point\":\"acknowledged\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "smtp-full",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_SEEDED",
+        "RUSTYMAIL_ENOSPC:{\"bytes_written_before_failure\":106037248,\"errno\":28}",
+        "RUSTYMAIL_SMTP_ENOSPC:{\"accepted\":false,\"final_reply\":451}",
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":0,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"smtp-full\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    },
+    {
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      },
+      "messages": 1,
+      "point": "sqlite-full",
+      "schema": 2,
+      "version_before_reopen": 2,
+      "observations": [
+        "RUSTYMAIL_SEEDED",
+        "RUSTYMAIL_ENOSPC:{\"bytes_written_before_failure\":106037248,\"errno\":28}",
+        "RUSTYMAIL_SQLITE_ENOSPC:{\"acceptance_error\":\"acceptance outcome unknown; close the SMTP connection and recover by operation ID\",\"candidate_visible\":false}",
+        "RUSTYMAIL_VERIFIED:{\"integrity\":{\"corrupt_blobs\":0,\"delivery_mismatches\":0,\"missing_blobs\":0,\"orphan_blobs\":1,\"quota_mismatches\":0,\"referenced_blobs\":1,\"staging_files\":0,\"uid_mismatches\":0,\"unexpected_files\":0},\"messages\":1,\"point\":\"sqlite-full\",\"schema\":2,\"version_before_reopen\":2}"
+      ]
+    }
+  ]
+}

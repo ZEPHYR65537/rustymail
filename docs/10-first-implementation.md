@@ -1,6 +1,6 @@
 # 第一轮实现：让 SMTP 的 250 有证据
 
-本章保留 0.1.0 首轮实现的过程和当时限制。0.2.0 新增的迁移、GC、恢复和故障验证见 [M1 教程](11-m1-storage.md)。
+本章保留 0.1.0 首轮实现的过程和当时限制，同时标注后续修正。迁移、GC、恢复和故障验证见 [M1 教程](11-m1-storage.md)，身份与 TLS 见 [M2 教程](12-m2-identity.md)，真实 I/O 取消生命周期见 [0.3.1 修复](13-cancellation-and-bounds.md)，三个入口与 STARTTLS 见 [M3.1 教程](14-m3-starttls.md)。这里描述的历史缺项不代表当前版本仍无这些能力；原始测试数量以历史报告为准。
 
 本章对应仓库的 0.1.0 L0 实验接收器。阅读完应能运行一封合成邮件，沿源码解释它为什么可见，并复现边界与故障测试。它不是完整邮件服务器的发布教程；生产路线仍由[实现计划](07-implementation-plan.md)约束。
 
@@ -47,7 +47,7 @@ python scripts/smoke.py --bin-dir target/release
 
 `core` 不依赖服务器；`protocol` 不访问磁盘；`store` 不懂 SMTP 响应；`server` 连接这几层。测试因此可以分别定位语法、会话、存储和网络错误。
 
-本版复用 Tokio、rusqlite/SQLite、SHA-256、UUID、serde/TOML 和 clap。TLS、密码散列、MIME 与域认证库仍是后续阶段的选择。本版小范围 SMTP grammar 自行实现，拒绝 quoted local-part、地址字面量和扩展参数；成熟 parser 的完整适配仍需 M0 spike。局部可运行不等于已经完成 RFC 一致性验证。
+0.1.0 复用 Tokio、rusqlite/SQLite、SHA-256、UUID、serde/TOML 和 clap。M2 后来接入 rustls 与 Argon2；MIME 和域认证仍待实现。小范围 SMTP grammar 自行实现，拒绝 quoted local-part、地址字面量和未支持的扩展参数；成熟 parser 的完整适配仍需评估。局部可运行不等于完成 RFC 一致性验证。
 
 ## 3. TCP 给你字节流，不给你一行
 
@@ -93,7 +93,7 @@ flowchart LR
 
 `Session::apply` 返回 `Action`，如 `Reply`、`CheckRecipient`、`BeginData`。纯状态机不负责查数据库，网络层拿到查找结果后再调用 `recipient_result`。这样可以测试“有效地址，但账号不存在”，不把 SQL 隐藏进 parser。
 
-当前实验账号仅允许收信，外域 RCPT 被拒绝；MAIL 发件人来自信封，消息头中的 `From:` 只是原文字节，不用于授权。相同本地地址去重；本地域和本地账号匹配忽略 ASCII 大小写，外部 MAIL local-part 保留大小写。
+本章的匿名收信实验只接收本地 RCPT；MAIL 发件人来自信封，消息头 `From:` 不作为本地登录身份。后续认证提交入口则额外检查 send-as 与正文 From，不能把这两种入口的授权规则混用。相同本地地址去重；本地域和本地账号匹配忽略 ASCII 大小写，外部 MAIL local-part 保留大小写。
 
 容易遗漏的错误：先发送合法 MAIL/RCPT，再发送畸形 MAIL。如果 parser 直接返回错误而没有清空旧事务，随后的 DATA 可能沿用旧收件人。因此网络层对语法错误的 MAIL 也执行 Reset，纯状态机对超大 SIZE 的 MAIL 同样先清空状态。
 
@@ -141,17 +141,17 @@ cargo test -p rustymail-store internal_retry_is_idempotent_but_conflicting_key_i
 
 内部 `operation_id` 允许重复调用得到同一个提交结果，但重放必须匹配原文摘要、长度、信封发件人和收件人集合。它不能消除外部 SMTP 重试的重复邮件：数据库已提交而 250 在网络上丢失时，对端不知道结果，重发会成为新的事务。互联网端到端 exactly-once 不是本系统的承诺。
 
-COMMIT 返回异常或提交结果通道超时时，服务器保守地关闭连接，不发送“肯定没有接收”的 4xx。后续应补充可操作的 operation 查询和故障诊断工具；当前 CLI 只能列信与检查存储，不具备完整的未知结果调查界面。
+COMMIT 返回异常或提交结果通道超时时，服务器保守地关闭连接，不发送“肯定没有接收”的 4xx。0.1.0 的调查工具只有列信和检查存储；M1 已补充持久 operation 查询，操作方法见 M1 教程。内部查询仍不能消除外部 SMTP 重试的歧义。
 
 ## 6. 异步不会自动带来有界资源
 
 网络运行在 Tokio；同步 SQLite 由一个 OS 线程独占，通过容量固定的 mpsc 队列接收请求。不能为每个 RCPT 随意创建无限多个 `spawn_blocking` 任务，否则线程池队列会成为隐蔽的内存堆积点。
 
-连接许可、按 IP 活动连接数、DATA 并发、最坏消息大小的磁盘预留共同控制入口。预留令牌随 staged/prepared 对象持有；即使网络 future 被取消，已经派发到阻塞线程的工作仍占预留和实例锁，直到对象真实释放。对象 Drop 释放许可，避免成功路径和十个错误路径各写一套计数回收代码。
+连接许可、按 IP 活动连接数、DATA 并发、最坏消息大小的磁盘预留共同控制入口。最初只有 staged/prepared 对象持有预留，后来复查发现这不能覆盖仍在执行的 Tokio 文件任务；0.3.1 才把预留和实例锁延伸到真实 I/O 与清理工作。现在网络 future 取消也不会提前释放正在使用的额度。Drop 集中回收资源，但正确性仍取决于令牌由谁持有，而不只是“用了 RAII”。
 
-磁盘预留是“本进程的保守准入预算”，不是文件系统保留空间。其他程序仍可能耗尽磁盘，实际写入和同步必须处理 ENOSPC。本版尚未完成磁盘满故障注入。
+磁盘预留是“本进程的保守准入预算”，不是文件系统保留空间。其他程序仍可能耗尽磁盘，实际写入和同步必须处理 ENOSPC。0.1.0 当时没有磁盘满实验；M1 已补充失败注入及 Linux 实际磁盘满验证，后续提交继续回归。
 
-SQLite 缓存大小和排队数量可配置。内存用量近似由“活动连接 × 网络缓冲 + 活动 DATA × 文件缓冲 + 缓存 + 运行时”组成，不随单封正文长度线性增长。25 MiB 分块测试证明代码路径可流式完成，不能证明某个 RSS 数字。当前没有吞吐、延迟或内存测量结果。
+SQLite 缓存大小和排队数量可配置。内存用量近似由“活动连接 × 网络缓冲 + 活动 DATA × 文件缓冲 + 缓存 + 运行时”组成；TLS 和 Argon2 接入后还要另计它们的开销。25 MiB 分块测试证明代码路径可流式完成，不能证明某个 RSS 数字。0.1.0 当时没有性能数据；后来的 [0.3.1 报告](../reports/0.3.1/validation.md)提供匿名收信样本，仍不代表认证混合负载。
 
 命令超时包住一整条 `line`，每来一个字节不重置期限，防止每隔一小段时间发送一个字节的连接无限占位。DATA 有每行期限和整个事务期限；本版 `data_idle_seconds` 实际作为单行完成期限使用，比“每收到字节重置的空闲时间”更严格。
 
@@ -212,10 +212,10 @@ cargo test -p rustymail-store child_process_crash_matrix_preserves_only_committe
 
 进程退出不等于机器断电：OS 页缓存还在，磁盘缓存、目录持久化和虚拟化层没有被模拟。Windows 的目录同步实现明确为空操作，输出 `directory_sync_supported=false`。即使 Linux CI 通过，也必须继续做 VM 掉电和真实文件系统实验，才能宣称耐久性门槛通过。
 
-## 9. 当前与设计的差距
+## 9. 0.1.0 当时与完整设计的差距
 
 迁移采用 SQLite `PRAGMA user_version=1`，未来版本拒绝启动；没有声称已实现完整迁移历史或降级工具。blob 暂用单层目录，未分片；MIME 元数据写入空占位对象，不能供 IMAP FETCH 使用。账号创建只生成接收权限，没有密码或可登录身份。配置中的未来字段仅有结构验证，`logging.level` 等字段尚不驱动完整可观测性系统。
 
-无 TLS/AUTH、IMAP、出站队列、退信、域认证、反垃圾、备份/GC、指标端点，也没有 Received/Return-Path 注入与 MIME 语义验证。`serve` 始终拒绝，`serve-lab` 要求环回地址、`delivery.mode="disabled"`、`spam.required=false`。不要通过转发端口把它暴露给公网，也不要降低现有 Emacs 客户端的 TLS 设置来迁就实验端口。
+0.1.0 当时没有 TLS/AUTH、IMAP、出站队列、退信、域认证、反垃圾、备份/GC、指标端点，也没有 Received/Return-Path 注入与 MIME 语义验证。M1/M2/M3.1 已逐步补上其中的 GC、TLS、身份和入口角色，其余限制以 README 与实现计划为准。当前 `serve` 仍拒绝，实验模式要求环回、禁用外发与显式实验扫描策略；不要转发到公网或降低 Emacs 的 TLS 要求。
 
-接下来的实现应先收紧 M1 的磁盘满、掉电和恢复工具，再完成 M2 TLS/认证与在线管理；最终按 M3–M8 补齐 SMTP、队列、IMAP 和生产验收。M0 的 IMAP literal、MIME worker 与依赖公告审计仍需单独关闭。每阶段继续保留可运行实验与真实限制，不将路线图上的功能写成已经实现。
+当时的下一步是 M1 存储验证和 M2 身份基础，这些阶段已有各自报告。现在的后续工作见[实现计划](07-implementation-plan.md)，不要沿历史缺项重复实现。每阶段保留可运行实验与真实限制，不将路线图写成已实现功能。

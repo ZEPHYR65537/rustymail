@@ -68,6 +68,8 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 11. [第一轮实现教程](docs/10-first-implementation.md)：从实际源码学习 TCP 分帧、状态机、异步取消、持久化与故障实验。
 12. [M1：故障、维护与实测](docs/11-m1-storage.md)：操作手册、故障边界、迁移与回收规则、Linux 实验。
 13. [M2：TLS、身份、授权与本地管理](docs/12-m2-identity.md)：独立客户端实验、密码验证预算、事务内授权和异步取消的责任边界。
+14. [取消与资源边界](docs/13-cancellation-and-bounds.md)：从真实缺陷学习生命周期、通知、字节预算和性能证据。
+15. [M3.1：入口职责与 STARTTLS](docs/14-m3-starttls.md)：共享准入、协议切换、预读丢弃、状态重置及独立客户端反例。
 
 ## 配套文件
 
@@ -76,13 +78,14 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [emacs/rustymail.el](emacs/rustymail.el) | 可加载的客户端配置；需填写自己的账号；服务端互通尚未验证 |
 | [emacs/authinfo.example](emacs/authinfo.example) | 凭据格式示例，只有占位值 |
 | [deploy/rustymail.lab.toml](deploy/rustymail.lab.toml) | 可运行实验配置，显式禁用未实现的扫描和外发 |
-| [deploy/rustymail.tls-lab.toml](deploy/rustymail.tls-lab.toml) | 隐式 TLS 与身份实验；按 M2 教程生成临时证书及应用密码 |
+| [deploy/rustymail.tls-lab.toml](deploy/rustymail.tls-lab.toml) | TLS/身份与三入口实验；启动命令决定活跃端口，见 M2/M3.1 教程 |
 | [deploy/rustymail.example.toml](deploy/rustymail.example.toml) | 完整配置契约；`check` 可验证；扫描必需，因此不能用来启动实验接收器 |
 | [deploy/rustymail.service.in](deploy/rustymail.service.in) | 未来 Linux 服务模板；当前不可直接启动 |
 | [存储迁移](crates/store/migrations/0002.sql) | 当前 `user_version=2`，加入迁移与维护记录；保留所有已接受邮件 |
 | [第一轮验证报告](reports/0.1.0-lab/validation.md) | 0.1.0 的历史测试、依赖和进程故障证据 |
 | [M1 验证报告](reports/m1/validation.md) | 0.2.0 的迁移、维护、Linux VM 故障与性能原始数据 |
 | [M2 验证报告](reports/m2/validation.md) | 0.3.0 的 TLS、身份、Unix 管理证据及依赖审计 |
+| [M3.1 验证报告](reports/m3.1/validation.md) | 0.4.0 的三入口与 STARTTLS、两平台协议及 Linux 存储故障回归 |
 | [验证记录](docs/validation.md) | 设计阶段的历史静态检查，以及各阶段验证报告入口 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。

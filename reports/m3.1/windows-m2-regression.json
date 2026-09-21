@@ -1,0 +1,19 @@
+{
+  "revision": "83caa0030bae27f3c77f3d2173782df8732f4f23",
+  "working_tree_dirty": false,
+  "platform": "nt",
+  "openssl": "OpenSSL 3.0.16 11 Feb 2025",
+  "checks": [
+    "offline credential lifecycle and private one-time output",
+    "unknown CA, wrong hostname and stalled TLS handshake rejected",
+    "AUTH required, wrong and unknown credentials return the same failure, authzid denied",
+    "authorized local delivery; envelope, From, Sender, Resent, duplicate/folded identity negatives",
+    "expired and wrong-name server certificates rejected by verified client",
+    "minimum TLS version enforced",
+    "only authorized message persisted; export byte-exact after restart",
+    "logs contain no application passwords, AUTH payloads, PHC or mail body"
+  ],
+  "online_admin_tested": false,
+  "different_uid_tested": false,
+  "production_ready": false
+}

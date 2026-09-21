@@ -1,0 +1,38 @@
+{
+  "database": {
+    "advisory-count": 1256,
+    "last-commit": null,
+    "last-updated": null
+  },
+  "lockfile": {
+    "dependency-count": 157
+  },
+  "settings": {
+    "target_arch": [],
+    "target_os": [],
+    "severity": null,
+    "ignore": [],
+    "informational_warnings": [
+      "unmaintained",
+      "unsound",
+      "notice"
+    ]
+  },
+  "vulnerabilities": {
+    "found": false,
+    "count": 0,
+    "list": []
+  },
+  "warnings": {},
+  "provenance": {
+    "code_revision": "83caa0030bae27f3c77f3d2173782df8732f4f23",
+    "cargo_lock_sha256": "e40bfaef5a7e1d44e3c7a23bbb908498953371316ad54fa7831a8cb632efbf4e",
+    "cargo_audit_version": "0.22.2",
+    "advisory_db_commit": "bd8037e5cbb8d8cc687c68cdd42ca53d742503fb",
+    "options": [
+      "--no-fetch",
+      "--no-yanked"
+    ],
+    "limitations": "Same advisory snapshot as 0.3.1; no yanked-version check or full dependency source audit; third-party lock entries unchanged."
+  }
+}

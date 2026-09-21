@@ -2,6 +2,8 @@
 
 本章对应 0.4.0 的第一部分 SMTP 接入实现。前置阅读：[M2 身份与 TLS](12-m2-identity.md)、[取消与资源边界](13-cancellation-and-bounds.md)。学习目标是解释收信和提交的不同信任边界，并实现不会把旧明文命令带入 TLS 的协议切换。
 
+本阶段的测试范围、条款到测试的映射与原始证据见 [M3.1 验证报告](../reports/m3.1/validation.md)。
+
 M3 整体尚未完成：本章仍使用既有受限地址/头部解析和原文保存策略，尚不添加 Received/Return-Path，不开放公网、外域投递、PIPELINING、SMTPUTF8 或 IMAP。不得把三个实验端口可用理解为生产 SMTP 已完成。
 
 ## 1. 先确定入口职责
@@ -93,7 +95,7 @@ python scripts/m3_smoke.py
 target/debug/rustymaild --config deploy/rustymail.tls-lab.toml serve-lab-smtp
 ```
 
-使用新的实验目录或复用已经初始化的实验目录；已有账号和秘密文件不要重复创建。客户端示例，执行时服务须已启动：
+使用新的实验目录或复用已经初始化的实验目录；已有账号和秘密文件不要重复创建。下方客户端示例使用 POSIX shell 的 heredoc；PowerShell 用户可将 `PY` 标记之间的 Python 代码保存成临时 `.py` 文件，再从仓库根目录执行。执行时服务须已启动：
 
 ```sh
 python - <<'PY'
