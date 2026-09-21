@@ -195,6 +195,9 @@ pub struct Session {
 }
 
 impl Session {
+    pub fn authentication_allowed(&self) -> bool {
+        self.greeted && self.transaction.is_none()
+    }
     pub fn new(max_message_bytes: u64, max_recipients: usize) -> Self {
         Self {
             greeted: false,

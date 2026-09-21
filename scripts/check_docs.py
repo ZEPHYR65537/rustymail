@@ -23,7 +23,7 @@ for file in files:
         links += 1
     assert not re.search(r"\bfsf\b", source, re.I), f"Stale name: {file}"
 
-for name in ["rustymail.example.toml", "rustymail.lab.toml"]:
+for name in ["rustymail.example.toml", "rustymail.lab.toml", "rustymail.tls-lab.toml"]:
     config = tomllib.loads((root / "deploy" / name).read_text(encoding="utf-8"))
     assert config["mode"] == "lab"
     assert config["delivery"]["mode"] == "disabled"

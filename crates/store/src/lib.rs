@@ -1,9 +1,11 @@
 //! Single-writer, file-backed message storage.
 mod blob;
+mod identity;
 mod maintenance;
 mod migration;
 mod runtime;
 pub use blob::{PreparedMessage, StagedMessage};
+pub use identity::{CredentialRecord, CredentialSummary, Principal, SubmissionIdentity};
 pub use maintenance::{GcCandidate, GcOptions, GcReport, GcRun, OperationSummary};
 pub use migration::{CURRENT_VERSION, MigrationRecord};
 pub use runtime::{Clock, FaultPoint, StorageRuntime, SystemClock};
@@ -25,6 +27,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error("identity or sender permission denied")]
+    PermissionDenied,
     #[error("storage I/O failure: {0}")]
     Io(#[from] io::Error),
     #[error("database failure: {0}")]
@@ -320,6 +324,25 @@ impl Store {
         plan: Acceptance,
         hook: impl Fn(&str),
     ) -> Result<AcceptedMessage, StoreError> {
+        self.accept_inner(message, plan, None, hook)
+    }
+
+    pub fn accept_submission(
+        &mut self,
+        message: PreparedMessage,
+        plan: Acceptance,
+        identity: SubmissionIdentity,
+    ) -> Result<AcceptedMessage, StoreError> {
+        self.accept_inner(message, plan, Some(identity), |_| {})
+    }
+
+    fn accept_inner(
+        &mut self,
+        message: PreparedMessage,
+        plan: Acceptance,
+        identity: Option<SubmissionIdentity>,
+        hook: impl Fn(&str),
+    ) -> Result<AcceptedMessage, StoreError> {
         if message.root != self.root
             || !valid_id(&plan.operation_id)
             || plan.recipients.is_empty()
@@ -332,10 +355,21 @@ impl Store {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let previous: Option<(String, String, String, u64)> = transaction.query_row(
-            "SELECT m.id,m.reverse_path,b.sha256,b.size_bytes FROM message m JOIN blob b ON b.id=m.blob_id WHERE ingest_key=?1", [&plan.operation_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, unsigned_column(r,3)?))).optional()?;
-        if let Some((id, original_sender, hash, size)) = previous {
+        let account = identity
+            .as_ref()
+            .map(|identity| identity.principal.account_id);
+        if let Some(identity) = &identity {
+            let sender = plan.sender.as_ref().ok_or(StoreError::PermissionDenied)?;
+            if !identity::may_send(&transaction, &identity.principal, sender)?
+                || !identity::may_send(&transaction, &identity.principal, &identity.author)?
+            {
+                return Err(StoreError::PermissionDenied);
+            }
+        }
+        let previous: Option<(String, String, String, u64, Option<i64>)> = transaction.query_row(
+            "SELECT m.id,m.reverse_path,b.sha256,b.size_bytes,m.authenticated_account_id FROM message m JOIN blob b ON b.id=m.blob_id WHERE ingest_key=?1", [&plan.operation_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, unsigned_column(r,3)?, r.get(4)?))).optional()?;
+        if let Some((id, original_sender, hash, size, original_account)) = previous {
             let old: BTreeSet<String> = transaction
                 .prepare("SELECT recipient FROM delivery WHERE message_id=?1")?
                 .query_map([&id], |r| r.get(0))?
@@ -344,6 +378,7 @@ impl Store {
                 || hash != message.hash
                 || size != message.size
                 || old != recipients
+                || original_account != account
             {
                 return Err(StoreError::IdempotencyConflict);
             }
@@ -386,8 +421,8 @@ impl Store {
         self.runtime.hit(FaultPoint::DatabaseWrite)?;
         transaction.execute("INSERT INTO blob(id,size_bytes,sha256,mime_metadata,metadata_version,created_at_ms) VALUES(?1,?2,?3,?4,1,?5)",
             params![message.id, message.size as i64, message.hash, b"{}".as_slice(), now])?;
-        transaction.execute("INSERT INTO message(id,ingest_key,blob_id,source,reverse_path,accepted_at_ms) VALUES(?1,?2,?3,'smtp',?4,?5)",
-            params![id, plan.operation_id, message.id, sender, now])?;
+        transaction.execute("INSERT INTO message(id,ingest_key,blob_id,source,reverse_path,accepted_at_ms,authenticated_account_id) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![id, plan.operation_id, message.id, if account.is_some() {"submission"} else {"smtp"}, sender, now, account])?;
         for (recipient, mailbox_id) in targets {
             // Read again because distinct aliases may target the same mailbox.
             let (uid, event_seq): (u64, i64) = transaction.query_row(

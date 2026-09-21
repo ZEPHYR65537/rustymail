@@ -1,17 +1,19 @@
 use rustymail_core::{Address, config::Config};
 use rustymail_store::{
     Acceptance, AcceptedMessage, PreparedMessage, StagedMessage, StorageRuntime, Store, StoreError,
-    StoreOptions,
+    StoreOptions, SubmissionIdentity,
 };
 use std::{sync::mpsc as std_mpsc, thread};
 use tokio::sync::{mpsc, oneshot};
 
 enum Request {
+    Call(Box<dyn FnOnce(&mut Store) + Send>),
     Recipient(Address, oneshot::Sender<Result<bool, StoreError>>),
     Stage(oneshot::Sender<Result<StagedMessage, StoreError>>),
     Accept(
         PreparedMessage,
         Acceptance,
+        Option<Box<SubmissionIdentity>>,
         oneshot::Sender<Result<AcceptedMessage, StoreError>>,
     ),
 }
@@ -66,16 +68,20 @@ impl StoreWorker {
                 }
                 while let Some(request) = receiver.blocking_recv() {
                     match request {
+                        Request::Call(call) => call(&mut store),
                         Request::Recipient(address, reply) => {
                             let _ = reply.send(store.recipient_exists(&address));
                         }
                         Request::Stage(reply) => {
                             let _ = reply.send(store.stage());
                         }
-                        Request::Accept(message, plan, reply) => {
+                        Request::Accept(message, plan, identity, reply) => {
                             // Once dispatched, acceptance finishes even if the
                             // client disconnects and drops its oneshot receiver.
-                            let result = store.accept(message, plan);
+                            let result = match identity {
+                                Some(identity) => store.accept_submission(message, plan, *identity),
+                                None => store.accept(message, plan),
+                            };
                             let _ = reply.send(result);
                         }
                     }
@@ -103,6 +109,19 @@ impl StoreWorker {
 }
 
 impl StoreClient {
+    pub async fn call<T: Send + 'static>(
+        &self,
+        call: impl FnOnce(&mut Store) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<T, StoreError> {
+        let (reply, result) = oneshot::channel();
+        self.sender
+            .send(Request::Call(Box::new(move |store| {
+                let _ = reply.send(call(store));
+            })))
+            .await
+            .map_err(|_| StoreError::WorkerUnavailable)?;
+        result.await.map_err(|_| StoreError::WorkerUnavailable)?
+    }
     pub async fn recipient_exists(&self, address: Address) -> Result<bool, StoreError> {
         let (reply, result) = oneshot::channel();
         self.sender
@@ -125,10 +144,16 @@ impl StoreClient {
         &self,
         message: PreparedMessage,
         plan: Acceptance,
+        identity: Option<SubmissionIdentity>,
     ) -> Result<AcceptedMessage, StoreError> {
         let (reply, result) = oneshot::channel();
         self.sender
-            .send(Request::Accept(message, plan, reply))
+            .send(Request::Accept(
+                message,
+                plan,
+                identity.map(Box::new),
+                reply,
+            ))
             .await
             .map_err(|_| StoreError::WorkerUnavailable)?;
         // Missing result is also ambiguous: it is never a definite rejection.

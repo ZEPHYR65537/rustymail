@@ -3,7 +3,7 @@ members = ["crates/core", "crates/protocol", "crates/store", "crates/server"]
 resolver = "3"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.94"
 repository = "https://github.com/ZEPHYR65537/rustymail"
@@ -24,6 +24,13 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "fs", "sync", "time", "signal"] }
 toml = "0.9"
 uuid = { version = "1", features = ["v4"] }
+argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
+base64 = "0.22"
+getrandom = "0.4"
+zeroize = { version = "1", features = ["derive"] }
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "tls12"] }
+rustix = { version = "1", features = ["process"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

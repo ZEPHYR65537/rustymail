@@ -21,6 +21,8 @@ enum Command {
     Check,
     /// Receive raw mail on the loopback SMTP listener only; no AUTH/TLS/IMAP.
     ServeLab,
+    /// Loopback implicit TLS submission and local administration (Unix socket on Linux).
+    ServeLabTls,
     /// Reserved production entry point; always refuses in this release.
     Serve,
 }
@@ -49,6 +51,10 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         Command::Serve => return Err("production serve is not implemented; use serve-lab with the explicit loopback lab configuration".into()),
         Command::ServeLab => {
             let server = LabServer::bind(config).await?;
+            server.serve_until(shutdown_signal()).await?;
+        }
+        Command::ServeLabTls=>{
+            let server=LabServer::bind_tls(config).await?;
             server.serve_until(shutdown_signal()).await?;
         }
     }

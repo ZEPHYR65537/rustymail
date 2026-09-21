@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.2.0 L0 本地实验实现：SMTP 收信、流式落盘、SQLite 原子投递，以及 M1 的迁移记录、离线垃圾回收、操作结果查询和缺失正文恢复。它还不是生产邮件服务器。** TLS、AUTH、IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回收信，生产启动入口明确拒绝。M1 的故障实验与性能证据见[验证报告](reports/m1/validation.md)。
+**当前是 0.3.0 L0 本地实验实现：在 M1 存储与恢复核心上加入隐式 TLS、应用密码、发件身份授权及本地管理接口。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。M1 的故障实验与性能证据见[验证报告](reports/m1/validation.md)。M2 使用 `serve-lab-tls` 与 `deploy/rustymail.tls-lab.toml`，完整实验可运行 `python scripts/m2_smoke.py`（先构建 `m2_certificates` example）；Linux 在线管理验证正在 CI 验收。
 
 ## 运行第一封邮件
 

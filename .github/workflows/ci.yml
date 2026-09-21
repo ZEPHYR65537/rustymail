@@ -31,6 +31,18 @@ jobs:
         run: cargo build --workspace --locked
       - name: Independent SMTP client and forced-exit recovery
         run: python scripts/smoke.py
+      - name: Build disposable TLS certificate generator
+        run: cargo build -p rustymail-server --example m2_certificates --locked
+      - name: Independent verified TLS, AUTH and Unix administration checks
+        run: python scripts/m2_smoke.py --peer-denial-probe
+      - name: Preserve M2 protocol evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m2-protocol-${{ matrix.os }}
+          path: reports/local/m2-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Documentation links and design attachments
         run: python scripts/check_docs.py
 

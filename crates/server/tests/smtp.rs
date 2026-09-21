@@ -247,7 +247,7 @@ async fn rejects_relay_unknown_users_and_malformed_mail_clears_old_transaction()
     let harness = Harness::start(1_000_000, 1_000_000, 1024).await;
     let mut client = Client::connect(harness.address).await;
     client.greet().await;
-    client.command("AUTH PLAIN Zm9v\r\n", 502).await;
+    client.command("AUTH PLAIN Zm9v\r\n", 538).await;
     client.command("DATA\r\n", 503).await;
     client.envelope().await;
     client

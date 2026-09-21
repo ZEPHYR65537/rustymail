@@ -6,6 +6,7 @@
 .authinfo.gpg
 *.pem
 *.key
+*.secret
 /data/
 /backups/
 /deploy/server.toml

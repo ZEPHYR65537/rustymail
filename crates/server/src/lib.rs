@@ -1,4 +1,7 @@
 //! Laboratory SMTP service; production features are gated until implemented.
+pub mod admin;
+pub mod auth;
+pub mod tls;
 mod worker;
 pub use worker::store_options;
 use worker::{StoreClient, StoreWorker};
@@ -8,7 +11,10 @@ use rustymail_protocol::{
     Action, Command, Envelope, LineDecoder, ParseError, Reply, Session, decode_data_line,
     parse_command,
 };
-use rustymail_store::{Acceptance, PreparedMessage, StagedMessage, StorageRuntime, StoreError};
+use rustymail_store::{
+    Acceptance, PreparedMessage, Principal, StagedMessage, StorageRuntime, StoreError,
+    SubmissionIdentity,
+};
 use std::{
     collections::HashMap,
     future::Future,
@@ -19,11 +25,8 @@ use std::{
 };
 use thiserror::Error;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::{
-        TcpListener, TcpStream,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-    },
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
+    net::{TcpListener, TcpStream},
     sync::{OwnedSemaphorePermit, Semaphore},
     task::JoinSet,
     time::timeout,
@@ -50,6 +53,9 @@ pub struct LabServer {
     listener: TcpListener,
     config: Arc<Config>,
     worker: StoreWorker,
+    tls: Option<tls::TlsSettings>,
+    auth: Option<Arc<auth::AuthService>>,
+    admin: Option<admin::AdminListener>,
 }
 
 struct ConnectionLease {
@@ -90,6 +96,43 @@ impl LabServer {
             listener,
             config: Arc::new(config),
             worker,
+            tls: None,
+            auth: None,
+            admin: None,
+        })
+    }
+
+    /// Implicit TLS plus AUTH PLAIN on the loopback submissions listener.
+    pub async fn bind_tls(config: Config) -> Result<Self, ServerError> {
+        config.require_lab_receiver()?;
+        if !config.listeners.submissions.ip().is_loopback() {
+            return Err(io::Error::other("lab TLS listener must use loopback").into());
+        }
+        let tls_config = config.tls.clone();
+        let tls = tokio::task::spawn_blocking(move || tls::TlsSettings::new(tls_config))
+            .await
+            .map_err(|_| ServerError::Task)??;
+        let auth = auth::AuthService::new(config.authentication.clone())
+            .await
+            .map_err(|_| io::Error::other("authentication initialization failed"))?;
+        let listener = TcpListener::bind(config.listeners.submissions).await?;
+        #[cfg(unix)]
+        let admin = Some(admin::AdminListener::bind(&config.admin_socket)?);
+        #[cfg(not(unix))]
+        let admin = None;
+        let for_worker = config.clone();
+        let worker = tokio::task::spawn_blocking(move || {
+            StoreWorker::start(&for_worker, StorageRuntime::default())
+        })
+        .await
+        .map_err(|_| ServerError::Task)??;
+        Ok(Self {
+            listener,
+            config: Arc::new(config),
+            worker,
+            tls: Some(tls),
+            auth: Some(auth),
+            admin,
         })
     }
 
@@ -99,6 +142,8 @@ impl LabServer {
 
     pub async fn serve_until(self, shutdown: impl Future<Output = ()>) -> Result<(), ServerError> {
         let connections = Arc::new(Semaphore::new(self.config.limits.connections));
+        let handshakes = Arc::new(Semaphore::new(self.config.limits.tls_handshakes));
+        let management = Arc::new(Semaphore::new(4));
         // Reserving worst-case message size bounds temporary bytes as well as
         // the number of active DATA streams. All permits live through commit.
         let slots = (self.config.limits.temporary_reserved_bytes / self.config.limits.message_bytes)
@@ -110,7 +155,7 @@ impl LabServer {
         log_event(
             "lab_smtp_ready",
             serde_json::json!({"bind":self.local_addr()?.to_string(),
-            "tls":false,"imap":false,"outbound":false,"scanning":false,
+            "tls":self.tls.is_some(),"imap":false,"outbound":false,"scanning":false,
             "directory_sync":rustymail_store::Store::directory_sync_supported()}),
         );
         loop {
@@ -119,10 +164,20 @@ impl LabServer {
                 joined = tasks.join_next(), if !tasks.is_empty() => {
                     if joined.is_some_and(|result| result.is_err()) { log_event("session_task_failed",serde_json::json!({})); }
                 }
+                incoming=admin::accept(&self.admin)=> {
+                    let stream=incoming?;
+                    if let Ok(permit)=management.clone().try_acquire_owned()
+                        && let (Some(auth),Some(tls))=(self.auth.clone(),self.tls.clone()) {
+                        let client=self.worker.client.clone();let config=self.config.clone();
+                        tasks.spawn(async move {let _permit=permit;
+                            let _=timeout(Duration::from_secs(60),admin::session(stream,client,auth,tls,config)).await;
+                        });
+                    }
+                }
                 incoming = self.listener.accept() => {
                     let (stream, peer) = incoming?;
                     let Ok(permit) = connections.clone().try_acquire_owned() else {
-                        reject_connection(stream,b"421 4.3.2 Connection limit\r\n").await; continue;
+                        if self.tls.is_none() { reject_connection(stream,b"421 4.3.2 Connection limit\r\n").await; } continue;
                     };
                     let allowed = {
                         let mut map = counts.lock().map_err(|_| ServerError::Task)?;
@@ -130,14 +185,25 @@ impl LabServer {
                             false
                         } else { *map.entry(peer.ip()).or_default() += 1; true }
                     };
-                    if !allowed { reject_connection(stream,b"421 4.3.2 IP connection limit\r\n").await; continue; }
+                    if !allowed { if self.tls.is_none() {reject_connection(stream,b"421 4.3.2 IP connection limit\r\n").await;} continue; }
                     let lease = ConnectionLease { _permit:permit, ip:peer.ip(), counts:counts.clone() };
                     let config = self.config.clone();
                     let client = self.worker.client.clone();
                     let ingest = ingest.clone();
+                    let tls=self.tls.clone();let auth=self.auth.clone();let handshakes=handshakes.clone();
                     tasks.spawn(async move {
                         let _lease = lease;
-                        if smtp_session(stream,config,client,ingest).await.is_err() {
+                        let result=async {
+                            stream.set_nodelay(true)?;
+                            if let Some(tls)=tls {
+                                let Ok(permit)=handshakes.try_acquire_owned() else {return Ok(());};
+                                let acceptor=tokio_rustls::TlsAcceptor::from(tls.config()?);
+                                let stream=timeout(Duration::from_secs(config.tls.handshake_timeout_seconds),acceptor.accept(stream)).await.map_err(|_|timed_out())??;
+                                drop(permit);
+                                smtp_session(stream,config,client,ingest,auth,peer.ip()).await
+                            } else {smtp_session(stream,config,client,ingest,None,peer.ip()).await}
+                        }.await;
+                        if result.is_err() {
                             // Deliberately no message, address, AUTH or arbitrary input in logs.
                             log_event("smtp_session_closed_with_error",serde_json::json!({}));
                         }
@@ -170,7 +236,10 @@ async fn reject_connection(mut stream: TcpStream, message: &[u8]) {
     let _ = timeout(Duration::from_millis(250), stream.write_all(message)).await;
 }
 
-async fn line(reader: &mut BufReader<OwnedReadHalf>, limit: usize) -> io::Result<Option<Vec<u8>>> {
+async fn line<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+    limit: usize,
+) -> io::Result<Option<Vec<u8>>> {
     let mut decoder = LineDecoder::new(limit);
     loop {
         let available = reader.fill_buf().await?;
@@ -194,13 +263,16 @@ async fn line(reader: &mut BufReader<OwnedReadHalf>, limit: usize) -> io::Result
     }
 }
 
-async fn write_response(writer: &mut OwnedWriteHalf, bytes: &[u8]) -> io::Result<()> {
-    timeout(Duration::from_secs(30), writer.write_all(bytes))
-        .await
-        .map_err(|_| timed_out())?
+async fn write_response<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
+    timeout(Duration::from_secs(30), async {
+        writer.write_all(bytes).await?;
+        writer.flush().await
+    })
+    .await
+    .map_err(|_| timed_out())?
 }
 
-async fn reply(writer: &mut OwnedWriteHalf, reply: Reply) -> io::Result<()> {
+async fn reply<W: AsyncWrite + Unpin>(writer: &mut W, reply: Reply) -> io::Result<()> {
     write_response(
         writer,
         format!("{} {}\r\n", reply.code, reply.text).as_bytes(),
@@ -208,14 +280,15 @@ async fn reply(writer: &mut OwnedWriteHalf, reply: Reply) -> io::Result<()> {
     .await
 }
 
-async fn smtp_session(
-    stream: TcpStream,
+async fn smtp_session<S: AsyncRead + AsyncWrite + Unpin>(
+    stream: S,
     config: Arc<Config>,
     store: StoreClient,
     ingest: Arc<Semaphore>,
+    auth: Option<Arc<auth::AuthService>>,
+    peer: IpAddr,
 ) -> Result<(), ServerError> {
-    stream.set_nodelay(true)?;
-    let (read, mut write) = stream.into_split();
+    let (read, mut write) = tokio::io::split(stream);
     let mut read = BufReader::with_capacity(config.limits.stream_buffer_bytes, read);
     write_response(
         &mut write,
@@ -226,13 +299,27 @@ async fn smtp_session(
         config.limits.message_bytes,
         config.limits.recipients_per_message,
     );
+    let mut principal: Option<Principal> = None;
+    let (_unused, mut changes) = tokio::sync::watch::channel(0);
+    if let Some(auth) = &auth {
+        changes = auth.changes.subscribe();
+    }
+    let unauthenticated_deadline = tokio::time::Instant::now()
+        + Duration::from_secs(config.timeouts.submission_unauthenticated_seconds);
+    let mut auth_attempts = 0;
     loop {
-        let incoming = timeout(
-            Duration::from_secs(config.timeouts.smtp_command_seconds),
-            line(&mut read, 512),
-        )
-        .await;
-        let bytes = match incoming {
+        let command_deadline =
+            tokio::time::Instant::now() + Duration::from_secs(config.timeouts.smtp_command_seconds);
+        let deadline = if auth.is_some() && principal.is_none() {
+            command_deadline.min(unauthenticated_deadline)
+        } else {
+            command_deadline
+        };
+        let incoming = tokio::select! {
+            _=wait_revoked(&mut changes,principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
+            result=tokio::time::timeout_at(deadline,line(&mut read,if auth.is_some(){1024}else{512}))=>result,
+        };
+        let bytes = zeroize::Zeroizing::new(match incoming {
             Ok(Ok(Some(bytes))) => bytes,
             Ok(Ok(None)) => return Ok(()),
             Ok(Err(error)) => {
@@ -243,7 +330,92 @@ async fn smtp_session(
                 let _ = reply(&mut write, Reply::new(421, "4.4.2 Command timeout")).await;
                 return Ok(());
             }
-        };
+        });
+        if bytes
+            .split(|&b| b == b' ')
+            .next()
+            .is_some_and(|word| word.eq_ignore_ascii_case(b"AUTH"))
+        {
+            let Some(auth) = &auth else {
+                reply(&mut write, Reply::new(538, "5.7.11 Encryption required")).await?;
+                continue;
+            };
+            if principal.is_some() || !state.authentication_allowed() {
+                reply(
+                    &mut write,
+                    Reply::new(503, "5.5.1 AUTH not allowed in this state"),
+                )
+                .await?;
+                continue;
+            }
+            let fields: Vec<_> = bytes.split(|&b| b == b' ').collect();
+            if !(2..=3).contains(&fields.len()) || !fields[1].eq_ignore_ascii_case(b"PLAIN") {
+                reply(&mut write, Reply::new(504, "5.5.4 Use AUTH PLAIN")).await?;
+                continue;
+            }
+            let encoded = if fields.len() == 3 {
+                zeroize::Zeroizing::new(fields[2].to_vec())
+            } else {
+                write_response(&mut write, b"334 \r\n").await?;
+                zeroize::Zeroizing::new(
+                    tokio::time::timeout_at(deadline, line(&mut read, 1024))
+                        .await
+                        .map_err(|_| timed_out())??
+                        .ok_or_else(|| io::Error::other("AUTH EOF"))?,
+                )
+            };
+            if encoded.as_slice() == b"*" {
+                reply(
+                    &mut write,
+                    Reply::new(501, "5.7.0 Authentication cancelled"),
+                )
+                .await?;
+                continue;
+            }
+            auth_attempts += 1;
+            let result = match auth::decode_plain(&encoded) {
+                Ok(credentials) => match tokio::time::timeout_at(
+                    deadline,
+                    auth.authenticate(&store, peer, credentials),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(auth::AuthError::Busy),
+                },
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(identity) => {
+                    principal = Some(identity);
+                    reply(
+                        &mut write,
+                        Reply::new(235, "2.7.0 Authentication successful"),
+                    )
+                    .await?;
+                    log_event("authentication_succeeded", serde_json::json!({}));
+                }
+                Err(auth::AuthError::Denied) => {
+                    reply(&mut write, Reply::new(535, "5.7.8 Authentication failed")).await?;
+                    log_event("authentication_failed", serde_json::json!({}));
+                }
+                Err(auth::AuthError::Busy) => {
+                    reply(
+                        &mut write,
+                        Reply::new(454, "4.7.0 Authentication temporarily unavailable"),
+                    )
+                    .await?;
+                }
+            }
+            if auth_attempts >= 5 && principal.is_none() {
+                return Ok(());
+            }
+            continue;
+        }
+        if bytes.len() + 2 > 512 {
+            reply(&mut write, Reply::new(500, "5.5.2 Command too long")).await?;
+            return Ok(());
+        }
         let command = match parse_command(&bytes) {
             Ok(command) => command,
             Err(error) => {
@@ -266,13 +438,52 @@ async fn smtp_session(
                 continue;
             }
         };
+        if auth.is_some() {
+            if matches!(command, Command::Mail { .. }) {
+                state.apply(Command::Reset);
+            }
+            if principal.is_none()
+                && matches!(
+                    command,
+                    Command::Mail { .. } | Command::Rcpt(_) | Command::Data
+                )
+            {
+                reply(&mut write, Reply::new(530, "5.7.0 Authentication required")).await?;
+                continue;
+            }
+            if let Command::Mail { sender, .. } = &command {
+                let allowed = if let (Some(identity), Some(sender)) = (&principal, sender) {
+                    let identity = identity.clone();
+                    let sender = sender.clone();
+                    store
+                        .call(move |store| store.authorize_sender(&identity, &sender))
+                        .await?
+                } else {
+                    false
+                };
+                if !allowed {
+                    reply(
+                        &mut write,
+                        Reply::new(553, "5.7.1 Sender identity not permitted"),
+                    )
+                    .await?;
+                    continue;
+                }
+            }
+        }
         match state.apply(command) {
             Action::Reply(response) => reply(&mut write, response).await?,
             Action::Hello { extended } => {
                 let text = if extended {
                     format!(
-                        "250-{}\r\n250-SIZE {}\r\n250-8BITMIME\r\n250 ENHANCEDSTATUSCODES\r\n",
-                        config.hostname, config.limits.message_bytes
+                        "250-{}\r\n250-SIZE {}\r\n250-8BITMIME\r\n{}250 ENHANCEDSTATUSCODES\r\n",
+                        config.hostname,
+                        config.limits.message_bytes,
+                        if auth.is_some() && principal.is_none() {
+                            "250-AUTH PLAIN\r\n"
+                        } else {
+                            ""
+                        }
                     )
                 } else {
                     format!("250 {}\r\n", config.hostname)
@@ -281,6 +492,7 @@ async fn smtp_session(
             }
             Action::Quit => {
                 reply(&mut write, Reply::new(221, "2.0.0 Bye")).await?;
+                let _ = timeout(Duration::from_secs(5), write.shutdown()).await;
                 return Ok(());
             }
             Action::CheckRecipient(address) => {
@@ -333,17 +545,24 @@ async fn smtp_session(
                     Reply::new(354, "Send message; end with <CRLF>.<CRLF>"),
                 )
                 .await?;
-                let receiving = timeout(
-                    Duration::from_secs(config.timeouts.data_total_seconds),
-                    receive_message(&mut read, stage, &config),
-                )
-                .await;
-                let message = match receiving {
+                let receiving = tokio::select! {
+                    _=wait_revoked(&mut changes,principal.as_ref(),&store)=>{reply(&mut write,Reply::new(421,"4.7.0 Session authorization changed")).await?;return Ok(());},
+                    result=timeout(Duration::from_secs(config.timeouts.data_total_seconds),receive_message(&mut read,stage,&config,auth.is_some()))=>result,
+                };
+                let (message, author) = match receiving {
                     Ok(Ok(message)) => message,
                     Ok(Err(ServerError::Storage(StoreError::SizeLimit))) => {
                         reply(
                             &mut write,
                             Reply::new(552, "5.3.4 Message or headers too large"),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    Ok(Err(ServerError::Storage(StoreError::PermissionDenied))) => {
+                        reply(
+                            &mut write,
+                            Reply::new(550, "5.7.1 Invalid submission identity headers"),
                         )
                         .await?;
                         return Ok(());
@@ -366,7 +585,19 @@ async fn smtp_session(
                     sender,
                     recipients,
                 };
-                match timeout(Duration::from_secs(60), store.accept(message, plan)).await {
+                let identity = match (principal.clone(), author) {
+                    (Some(principal), Some(author)) => {
+                        Some(SubmissionIdentity { principal, author })
+                    }
+                    (None, None) => None,
+                    _ => return Err(StoreError::PermissionDenied.into()),
+                };
+                match timeout(
+                    Duration::from_secs(60),
+                    store.accept(message, plan, identity),
+                )
+                .await
+                {
                     Ok(Ok(accepted)) => {
                         log_event(
                             "message_accepted",
@@ -388,6 +619,13 @@ async fn smtp_session(
                     Ok(Err(StoreError::Quota)) => {
                         reply(&mut write, Reply::new(452, "4.2.2 Mailbox quota exceeded")).await?
                     }
+                    Ok(Err(StoreError::PermissionDenied)) => {
+                        reply(
+                            &mut write,
+                            Reply::new(550, "5.7.1 Submission identity denied or revoked"),
+                        )
+                        .await?;
+                    }
                     Ok(Err(StoreError::RecipientUnavailable)) => {
                         reply(
                             &mut write,
@@ -404,13 +642,15 @@ async fn smtp_session(
     }
 }
 
-async fn receive_message(
-    reader: &mut BufReader<OwnedReadHalf>,
+async fn receive_message<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
     mut stage: StagedMessage,
     config: &Config,
-) -> Result<PreparedMessage, ServerError> {
+    submission: bool,
+) -> Result<(PreparedMessage, Option<rustymail_core::Address>), ServerError> {
     let mut in_headers = true;
     let mut headers = 0usize;
+    let mut identities = SubmissionHeaders::default();
     loop {
         // One extra octet is permitted for SMTP transparency. The decoded line
         // including CRLF is checked against 1000 bytes separately.
@@ -424,7 +664,12 @@ async fn receive_message(
         let data = decode_data_line(raw)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let Some(data) = data else {
-            return Ok(stage.prepare().await?);
+            let author = if submission {
+                Some(identities.finish()?)
+            } else {
+                None
+            };
+            return Ok((stage.prepare().await?, author));
         };
         if in_headers {
             headers = headers
@@ -435,8 +680,96 @@ async fn receive_message(
             }
             if data == b"\r\n" {
                 in_headers = false;
+            } else if submission {
+                identities.line(&data)?;
             }
         }
         stage.append(&data).await?;
+    }
+}
+
+async fn wait_revoked(
+    changes: &mut tokio::sync::watch::Receiver<u64>,
+    principal: Option<&Principal>,
+    store: &StoreClient,
+) {
+    let Some(principal) = principal else {
+        return std::future::pending().await;
+    };
+    loop {
+        if changes.changed().await.is_err() {
+            return;
+        }
+        let principal = principal.clone();
+        if !store
+            .call(move |store| store.principal_current(&principal))
+            .await
+            .unwrap_or(false)
+        {
+            return;
+        }
+    }
+}
+
+#[derive(Default)]
+struct SubmissionHeaders {
+    author: Option<rustymail_core::Address>,
+    identity_field: bool,
+}
+impl SubmissionHeaders {
+    fn line(&mut self, line: &[u8]) -> Result<(), StoreError> {
+        if line.first().is_some_and(|b| b.is_ascii_whitespace()) {
+            return if self.identity_field {
+                Err(StoreError::PermissionDenied)
+            } else {
+                Ok(())
+            };
+        }
+        let colon = line
+            .iter()
+            .position(|&b| b == b':')
+            .ok_or(StoreError::PermissionDenied)?;
+        let (name, value) = (&line[..colon], &line[colon + 1..]);
+        if name.is_empty()
+            || name
+                .iter()
+                .any(|b| !b.is_ascii_alphanumeric() && *b != b'-')
+        {
+            return Err(StoreError::PermissionDenied);
+        }
+        self.identity_field = name.eq_ignore_ascii_case(b"From");
+        if name.eq_ignore_ascii_case(b"Sender")
+            || name
+                .get(..7)
+                .is_some_and(|name| name.eq_ignore_ascii_case(b"Resent-"))
+        {
+            return Err(StoreError::PermissionDenied);
+        }
+        if self.identity_field {
+            if self.author.is_some() {
+                return Err(StoreError::PermissionDenied);
+            }
+            let value = std::str::from_utf8(value)
+                .map_err(|_| StoreError::PermissionDenied)?
+                .trim();
+            let mailbox = if let Some((display, mailbox)) = value.rsplit_once('<') {
+                if display.contains(['<', '>', ',', ';', ':', '(', ')']) || !display.is_ascii() {
+                    return Err(StoreError::PermissionDenied);
+                }
+                mailbox
+                    .strip_suffix('>')
+                    .ok_or(StoreError::PermissionDenied)?
+            } else {
+                value
+            };
+            self.author = Some(
+                rustymail_core::Address::parse(mailbox)
+                    .map_err(|_| StoreError::PermissionDenied)?,
+            );
+        }
+        Ok(())
+    }
+    fn finish(self) -> Result<rustymail_core::Address, StoreError> {
+        self.author.ok_or(StoreError::PermissionDenied)
     }
 }
