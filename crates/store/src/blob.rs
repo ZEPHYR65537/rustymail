@@ -1,4 +1,4 @@
-use crate::{InstanceLock, StoreError, StoreOptions};
+use crate::{FaultPoint, InstanceLock, StorageRuntime, StoreError, StoreOptions};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -107,6 +107,7 @@ pub struct StagedMessage {
     poisoned: bool,
     reservation: Option<DiskReservation>,
     lock: Arc<InstanceLock>,
+    runtime: StorageRuntime,
 }
 
 /// Only `StagedMessage::prepare` can construct this durability token.
@@ -140,6 +141,7 @@ impl StagedMessage {
         lock: Arc<InstanceLock>,
         reserved: Arc<Mutex<u64>>,
         options: &StoreOptions,
+        runtime: StorageRuntime,
     ) -> Result<Self, StoreError> {
         let total = fs2::total_space(root.as_ref())?;
         let available = fs2::available_space(root.as_ref())?;
@@ -167,6 +169,7 @@ impl StagedMessage {
         };
         let id = Uuid::new_v4().simple().to_string();
         let path = root.join("staging").join(format!("{id}.part"));
+        runtime.hit(FaultPoint::StageCreate)?;
         let file = private_file(&path, true)?;
         let mut async_file = tokio::fs::File::from_std(file);
         async_file.set_max_buf_size(options.stream_buffer_bytes);
@@ -184,6 +187,7 @@ impl StagedMessage {
             poisoned: false,
             reservation: Some(reservation),
             lock,
+            runtime,
         })
     }
 
@@ -203,6 +207,7 @@ impl StagedMessage {
         // A cancelled write can leave partial bytes on disk. Only a completed
         // write restores this token, so later prepare cannot accept a stale hash.
         self.poisoned = true;
+        self.runtime.hit(FaultPoint::Append)?;
         if let Err(error) = writer.write_all(bytes).await {
             return Err(error.into());
         }
@@ -228,12 +233,15 @@ impl StagedMessage {
             return Err(StoreError::PoisonedStage);
         }
         let mut writer = self.writer.take().ok_or(StoreError::PoisonedStage)?;
+        self.runtime.hit(FaultPoint::Flush)?;
         writer.flush().await?;
+        self.runtime.hit(FaultPoint::FileSync)?;
         writer.get_ref().sync_all().await?;
         // Close before renaming on Windows, and wait for all Tokio file work.
         let file = writer.into_inner().into_std().await;
         drop(file);
         hook("file_synced");
+        self.runtime.hit(FaultPoint::FileSynced)?;
         let root = self.root.clone();
         let id = self.id.clone();
         let path = self.path.clone();
@@ -241,16 +249,22 @@ impl StagedMessage {
         let hash = format!("{:x}", self.hash.clone().finalize());
         let reservation = self.reservation.take().ok_or(StoreError::PoisonedStage)?;
         let lock = self.lock.clone();
+        let runtime = self.runtime.clone();
         tokio::task::spawn_blocking(move || {
             let destination = blob_path(&root, &id)?;
             if destination.exists() {
                 return Err(StoreError::InvalidId);
             }
+            runtime.hit(FaultPoint::Rename)?;
             fs::rename(&path, &destination)?;
             hook("renamed");
+            runtime.hit(FaultPoint::Renamed)?;
+            runtime.hit(FaultPoint::BlobDirectorySync)?;
             sync_directory(&root.join("blobs"))?;
+            runtime.hit(FaultPoint::StagingDirectorySync)?;
             sync_directory(&root.join("staging"))?;
             hook("directories_synced");
+            runtime.hit(FaultPoint::DirectoriesSynced)?;
             Ok(PreparedMessage {
                 root,
                 id,

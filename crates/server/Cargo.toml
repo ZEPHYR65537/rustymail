@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+test-support = ["rustymail-store/test-support"]
+
 [[bin]]
 name = "rustymaild"
 path = "src/bin/rustymaild.rs"

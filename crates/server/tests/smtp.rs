@@ -1,6 +1,6 @@
 use rustymail_core::{Address, config::Config};
 use rustymail_server::{LabServer, store_options};
-use rustymail_store::Store;
+use rustymail_store::{StorageRuntime, Store};
 use std::{io, net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -24,6 +24,20 @@ struct Harness {
 
 impl Harness {
     async fn start(alice_quota: u64, bob_quota: u64, message_bytes: u64) -> Self {
+        Self::start_with_runtime(
+            alice_quota,
+            bob_quota,
+            message_bytes,
+            StorageRuntime::default(),
+        )
+        .await
+    }
+    async fn start_with_runtime(
+        alice_quota: u64,
+        bob_quota: u64,
+        message_bytes: u64,
+        runtime: StorageRuntime,
+    ) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let mut config = Config::parse(LAB).unwrap();
         config.data_dir = directory.path().join("mail");
@@ -51,7 +65,7 @@ impl Harness {
             let reserve = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             config.listeners.smtp = reserve.local_addr().unwrap();
             drop(reserve);
-            match LabServer::bind(config.clone()).await {
+            match LabServer::bind_with_runtime(config.clone(), runtime.clone()).await {
                 Ok(bound) => {
                     server = Some(bound);
                     break;
@@ -165,6 +179,67 @@ async fn actual_tcp_receives_dot_stuffed_utf8_and_persists_after_restart() {
         .unwrap();
     assert_eq!(output, raw.as_bytes());
     assert!(store.check_integrity().unwrap().healthy());
+}
+
+#[cfg(feature = "test-support")]
+#[tokio::test]
+async fn storage_faults_never_return_250_and_unknown_commits_close_without_rejection() {
+    use rustymail_store::FaultPoint;
+    for point in [
+        FaultPoint::Append,
+        FaultPoint::FileSync,
+        FaultPoint::BlobDirectorySync,
+        FaultPoint::Commit,
+        FaultPoint::AfterCommit,
+    ] {
+        let runtime = StorageRuntime::default().with_hook(move |at| {
+            if at == point {
+                Err(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "simulated disk failure",
+                ))
+            } else {
+                Ok(())
+            }
+        });
+        let harness = Harness::start_with_runtime(1_000_000, 1_000_000, 1024, runtime).await;
+        let mut client = Client::connect(harness.address).await;
+        client.greet().await;
+        client.envelope().await;
+        client.command("DATA\r\n", 354).await;
+        client
+            .writer
+            .write_all(b"Subject: injected failure\r\n\r\nTest.\r\n.\r\n")
+            .await
+            .unwrap();
+        let mut final_line = String::new();
+        let count = timeout(
+            Duration::from_secs(10),
+            client.reader.read_line(&mut final_line),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        if matches!(point, FaultPoint::Commit | FaultPoint::AfterCommit) {
+            assert_eq!(
+                count, 0,
+                "unknown outcome must not claim rejection: {final_line}"
+            );
+        } else {
+            assert!(final_line.starts_with("451 "), "{point:?}: {final_line}");
+        }
+        drop(client);
+        let (_directory, config) = harness.stop().await;
+        let store = Store::open_existing(&config.data_dir, store_options(&config)).unwrap();
+        assert!(store.check_integrity().unwrap().healthy());
+        let messages = store
+            .list_messages(&Address::parse("alice@example.com").unwrap(), 0, 10)
+            .unwrap();
+        assert_eq!(
+            messages.len(),
+            usize::from(point == FaultPoint::AfterCommit)
+        );
+    }
 }
 
 #[tokio::test]

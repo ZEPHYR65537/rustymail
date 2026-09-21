@@ -24,12 +24,50 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Tests including crash injection and real TCP
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --all-features --locked
       - name: Build command-line programs
         run: cargo build --workspace --locked
       - name: Independent SMTP client and forced-exit recovery
         run: python scripts/smoke.py
       - name: Documentation links and design attachments
         run: python scripts/check_docs.py
+
+  linux-storage-labs:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust and static Linux target
+        run: rustup toolchain install 1.94.0 --profile minimal --target x86_64-unknown-linux-musl
+      - name: Install disposable VM tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 busybox-static linux-image-virtual musl-tools zstd kmod e2fsprogs
+      - name: Build native optimized server
+        run: cargo build --workspace --release --locked
+      - name: Measure native SMTP latency and daemon memory
+        run: python scripts/benchmark.py
+      - name: Build static guest programs
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+        run: |
+          cargo build --workspace --release --locked --target x86_64-unknown-linux-musl
+          cargo build -p rustymail-store --example m1_probe --features test-support --release --locked --target x86_64-unknown-linux-musl
+      - name: VM power cuts and real filesystem exhaustion
+        run: python scripts/powercut.py
+      - name: Preserve raw laboratory evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m1-linux-evidence
+          path: |
+            reports/local/benchmark.json
+            reports/local/powercut.json
+            reports/local/failed-*.log
+          if-no-files-found: warn
+          retention-days: 14

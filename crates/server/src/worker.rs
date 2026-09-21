@@ -1,6 +1,7 @@
 use rustymail_core::{Address, config::Config};
 use rustymail_store::{
-    Acceptance, AcceptedMessage, PreparedMessage, StagedMessage, Store, StoreError, StoreOptions,
+    Acceptance, AcceptedMessage, PreparedMessage, StagedMessage, StorageRuntime, Store, StoreError,
+    StoreOptions,
 };
 use std::{sync::mpsc as std_mpsc, thread};
 use tokio::sync::{mpsc, oneshot};
@@ -39,7 +40,7 @@ pub fn store_options(config: &Config) -> StoreOptions {
 impl StoreWorker {
     /// Start before listening for commands. SQLite ownership never crosses from
     /// the dedicated OS thread onto an asynchronous runtime worker.
-    pub fn start(config: &Config) -> Result<Self, StoreError> {
+    pub fn start(config: &Config, runtime: StorageRuntime) -> Result<Self, StoreError> {
         let (sender, mut receiver) = mpsc::channel(config.store.writer_queue);
         let (ready_tx, ready_rx) = std_mpsc::sync_channel(1);
         let root = config.data_dir.clone();
@@ -47,18 +48,19 @@ impl StoreWorker {
         let join = thread::Builder::new()
             .name("rustymail-store".into())
             .spawn(move || {
-                let mut store = match Store::open(root, options).and_then(|store| {
-                    if !store.check_integrity()?.healthy() {
-                        return Err(StoreError::Integrity);
-                    }
-                    Ok(store)
-                }) {
-                    Ok(store) => store,
-                    Err(error) => {
-                        let _ = ready_tx.send(Err(error));
-                        return;
-                    }
-                };
+                let mut store =
+                    match Store::open_with_runtime(root, options, runtime).and_then(|store| {
+                        if !store.check_integrity()?.healthy() {
+                            return Err(StoreError::Integrity);
+                        }
+                        Ok(store)
+                    }) {
+                        Ok(store) => store,
+                        Err(error) => {
+                            let _ = ready_tx.send(Err(error));
+                            return;
+                        }
+                    };
                 if ready_tx.send(Ok(())).is_err() {
                     return;
                 }

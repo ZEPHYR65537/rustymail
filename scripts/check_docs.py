@@ -10,7 +10,7 @@ from urllib.parse import unquote
 
 root = Path(__file__).resolve().parents[1]
 files = [root / "README.md", *sorted((root / "docs").rglob("*.md")),
-         *sorted((root / "reports/0.1.0-lab").glob("*.md"))]
+         *sorted(p for p in (root / "reports").rglob("*.md") if "local" not in p.relative_to(root / "reports").parts)]
 links = 0
 for file in files:
     source = file.read_text(encoding="utf-8")

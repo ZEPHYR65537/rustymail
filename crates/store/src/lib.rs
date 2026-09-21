@@ -1,10 +1,17 @@
 //! Single-writer, file-backed message storage.
 mod blob;
+mod maintenance;
+mod migration;
+mod runtime;
 pub use blob::{PreparedMessage, StagedMessage};
+pub use maintenance::{GcCandidate, GcOptions, GcReport, GcRun, OperationSummary};
+pub use migration::{CURRENT_VERSION, MigrationRecord};
+pub use runtime::{Clock, FaultPoint, StorageRuntime, SystemClock};
 
 use blob::{blob_path, private_directory, private_file, reject_symlink, sync_directory, valid_id};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rustymail_core::Address;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -12,12 +19,9 @@ use std::{
     io::{self, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 use uuid::Uuid;
-
-const SCHEMA: &str = include_str!("../migrations/0001.sql");
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -35,6 +39,12 @@ pub enum StoreError {
     InvalidId,
     #[error("unsupported database schema; refusing to modify it")]
     SchemaVersion,
+    #[error("migration outcome unknown; preserve the database and reopen to inspect its version")]
+    MigrationOutcomeUnknown,
+    #[error("maintenance requires no live staged or prepared messages")]
+    MaintenanceBusy,
+    #[error("destination already exists; refusing to overwrite it")]
+    AlreadyExists,
     #[error("database or referenced message integrity check failed")]
     Integrity,
     #[error("message exceeds the configured limit")]
@@ -97,7 +107,7 @@ pub struct AcceptedMessage {
     pub already_committed: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct MessageSummary {
     pub uid: u32,
     pub message_id: String,
@@ -105,18 +115,27 @@ pub struct MessageSummary {
     pub accepted_at_ms: i64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct IntegrityReport {
     pub referenced_blobs: u64,
     pub missing_blobs: u64,
     pub corrupt_blobs: u64,
     pub orphan_blobs: u64,
     pub staging_files: u64,
+    pub unexpected_files: u64,
+    pub quota_mismatches: u64,
+    pub uid_mismatches: u64,
+    pub delivery_mismatches: u64,
 }
 
 impl IntegrityReport {
     pub fn healthy(&self) -> bool {
-        self.missing_blobs == 0 && self.corrupt_blobs == 0
+        self.missing_blobs == 0
+            && self.corrupt_blobs == 0
+            && self.unexpected_files == 0
+            && self.quota_mismatches == 0
+            && self.uid_mismatches == 0
+            && self.delivery_mismatches == 0
     }
 }
 
@@ -128,6 +147,7 @@ pub struct Store {
     options: StoreOptions,
     lock: Arc<InstanceLock>,
     reserved_bytes: Arc<Mutex<u64>>,
+    runtime: StorageRuntime,
 }
 
 struct InstanceLock(File);
@@ -142,14 +162,6 @@ impl Drop for InstanceLock {
     }
 }
 
-fn now_ms() -> Result<i64, StoreError> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|d| i64::try_from(d.as_millis()).ok())
-        .ok_or(StoreError::InvalidInput)
-}
-
 fn unsigned_column(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u64> {
     let value: i64 = row.get(index)?;
     u64::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(index, value))
@@ -157,6 +169,34 @@ fn unsigned_column(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u6
 
 impl Store {
     pub fn open(path: impl AsRef<Path>, options: StoreOptions) -> Result<Self, StoreError> {
+        Self::open_with_runtime(path, options, StorageRuntime::default())
+    }
+
+    pub fn open_with_runtime(
+        path: impl AsRef<Path>,
+        options: StoreOptions,
+        runtime: StorageRuntime,
+    ) -> Result<Self, StoreError> {
+        Self::open_inner(path.as_ref(), options, runtime, true)
+    }
+
+    /// Read/maintenance commands must never initialize an empty store by typo.
+    pub fn open_existing(
+        path: impl AsRef<Path>,
+        options: StoreOptions,
+    ) -> Result<Self, StoreError> {
+        Self::open_inner(path.as_ref(), options, StorageRuntime::default(), false)
+    }
+
+    fn open_inner(
+        path: &Path,
+        options: StoreOptions,
+        runtime: StorageRuntime,
+        create: bool,
+    ) -> Result<Self, StoreError> {
+        if !create && (!path.is_dir() || !path.join("meta.sqlite").is_file()) {
+            return Err(StoreError::NotFound);
+        }
         if options.max_message_bytes == 0
             || options.max_message_bytes > 25 * 1024 * 1024
             || !(1024..=65536).contains(&options.stream_buffer_bytes)
@@ -166,7 +206,7 @@ impl Store {
         {
             return Err(StoreError::InvalidInput);
         }
-        private_directory(path.as_ref())?;
+        private_directory(path)?;
         let root = Arc::new(fs::canonicalize(path)?);
         let lock_path = root.join("instance.lock");
         reject_symlink(&lock_path)?;
@@ -187,29 +227,13 @@ impl Store {
         // default creation mode). The containing directory is also private.
         drop(private_file(&database_path, false)?);
         let mut connection = Connection::open(database_path)?;
-        let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-        if version > 1 {
-            return Err(StoreError::SchemaVersion);
-        }
-        if version == 0 {
-            let count: i64 = connection.query_row("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'", [], |r| r.get(0))?;
-            if count != 0 {
-                return Err(StoreError::SchemaVersion);
-            }
-        }
+        let version = migration::validate(&connection)?;
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "cache_size", -i64::from(options.cache_kib))?;
-        if version == 0 {
-            let transaction = connection.transaction()?;
-            transaction.execute_batch(SCHEMA)?;
-            transaction.pragma_update(None, "user_version", 1)?;
-            transaction.commit()?;
-        } else if version != 1 {
-            return Err(StoreError::SchemaVersion);
-        }
+        migration::upgrade(&mut connection, version, &runtime)?;
         let result: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         if result != "ok" {
             return Err(StoreError::Integrity);
@@ -221,6 +245,11 @@ impl Store {
         if violations != 0 {
             return Err(StoreError::Integrity);
         }
+        // The exclusive lock proves no previous maintenance owner is alive.
+        connection.execute(
+            "UPDATE maintenance_run SET status='interrupted' WHERE status='running'",
+            [],
+        )?;
         sync_directory(&root)?;
         Ok(Self {
             connection,
@@ -228,6 +257,7 @@ impl Store {
             options,
             lock,
             reserved_bytes: Arc::new(Mutex::new(0)),
+            runtime,
         })
     }
 
@@ -242,7 +272,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
             "INSERT INTO account(login, quota_bytes, created_at_ms) VALUES(?1, ?2, ?3)",
-            params![address.local_key(), quota, now_ms()?],
+            params![address.local_key(), quota, self.runtime.now_ms()?],
         )?;
         let account_id = transaction.last_insert_rowid();
         transaction.execute("INSERT INTO address(address, account_id, receive_enabled, send_enabled) VALUES(?1, ?2, 1, 0)", params![address.local_key(), account_id])?;
@@ -272,6 +302,7 @@ impl Store {
             self.lock.clone(),
             self.reserved_bytes.clone(),
             &self.options,
+            self.runtime.clone(),
         )
     }
 
@@ -351,7 +382,8 @@ impl Store {
             }
         }
         let id = Uuid::new_v4().simple().to_string();
-        let now = now_ms()?;
+        let now = self.runtime.now_ms()?;
+        self.runtime.hit(FaultPoint::DatabaseWrite)?;
         transaction.execute("INSERT INTO blob(id,size_bytes,sha256,mime_metadata,metadata_version,created_at_ms) VALUES(?1,?2,?3,?4,1,?5)",
             params![message.id, message.size as i64, message.hash, b"{}".as_slice(), now])?;
         transaction.execute("INSERT INTO message(id,ingest_key,blob_id,source,reverse_path,accepted_at_ms) VALUES(?1,?2,?3,'smtp',?4,?5)",
@@ -386,12 +418,19 @@ impl Store {
             )?;
         }
         hook("before_commit");
+        self.runtime.hit(FaultPoint::BeforeCommit)?;
+        self.runtime
+            .hit(FaultPoint::Commit)
+            .map_err(|_| StoreError::OutcomeUnknown)?;
         // SQLite can fail while reporting a commit outcome. Never map this to
         // a definite SMTP 4xx while an accepted message might be visible.
         transaction
             .commit()
             .map_err(|_| StoreError::OutcomeUnknown)?;
         hook("after_commit");
+        self.runtime
+            .hit(FaultPoint::AfterCommit)
+            .map_err(|_| StoreError::OutcomeUnknown)?;
         Ok(AcceptedMessage {
             message_id: id,
             already_committed: false,
@@ -434,11 +473,22 @@ impl Store {
         let id: Option<String> = self.connection.query_row("SELECT m.blob_id FROM message m JOIN mailbox_message mm ON mm.message_id=m.id JOIN mailbox box ON box.id=mm.mailbox_id JOIN account a ON a.id=box.account_id WHERE a.login=?1 AND m.id=?2 LIMIT 1", params![address.local_key(),message_id], |r| r.get(0)).optional()?;
         let path = blob_path(&self.root, &id.ok_or(StoreError::NotFound)?)?;
         reject_symlink(&path)?;
+        if !fs::metadata(&path)?.is_file() {
+            return Err(StoreError::UnsafePath);
+        }
         Ok(io::copy(&mut File::open(path)?, destination)?)
     }
 
     pub fn check_integrity(&self) -> Result<IntegrityReport, StoreError> {
-        let mut report = IntegrityReport::default();
+        let quota_mismatches = self.connection.query_row("SELECT count(*) FROM account a WHERE a.used_bytes != (SELECT coalesce(sum(b.size_bytes),0) FROM mailbox box JOIN mailbox_message mm ON mm.mailbox_id=box.id JOIN message m ON m.id=mm.message_id JOIN blob b ON b.id=m.blob_id WHERE box.account_id=a.id)", [], |r| unsigned_column(r,0))?;
+        let uid_mismatches = self.connection.query_row("SELECT count(*) FROM mailbox box WHERE box.uidnext <= (SELECT coalesce(max(uid),0) FROM mailbox_message WHERE mailbox_id=box.id) OR box.event_seq < (SELECT coalesce(max(event_seq),0) FROM mailbox_event WHERE mailbox_id=box.id)", [], |r| unsigned_column(r,0))?;
+        let delivery_mismatches = self.connection.query_row("SELECT count(*) FROM mailbox_message mm JOIN delivery d ON d.id=mm.delivery_id WHERE d.message_id != mm.message_id OR d.route != 'local' OR d.state != 'delivered'", [], |r| unsigned_column(r,0))?;
+        let mut report = IntegrityReport {
+            quota_mismatches,
+            uid_mismatches,
+            delivery_mismatches,
+            ..IntegrityReport::default()
+        };
         let mut statement = self
             .connection
             .prepare("SELECT id,size_bytes,sha256 FROM blob")?;
@@ -451,6 +501,15 @@ impl Store {
             let expected: String = row.get(2)?;
             let path = blob_path(&self.root, &id)?;
             reject_symlink(&path)?;
+            match fs::metadata(&path) {
+                Ok(metadata) if !metadata.is_file() => return Err(StoreError::UnsafePath),
+                Ok(_) => (),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    report.missing_blobs += 1;
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            }
             let mut file = match File::open(path) {
                 Ok(file) => file,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -459,6 +518,9 @@ impl Store {
                 }
                 Err(error) => return Err(error.into()),
             };
+            if !file.metadata()?.is_file() {
+                return Err(StoreError::UnsafePath);
+            }
             let mut hash = Sha256::new();
             let mut actual = 0u64;
             loop {
@@ -477,12 +539,17 @@ impl Store {
             let entry = entry?;
             let name = entry.file_name();
             let Some(id) = name.to_str().and_then(|s| s.strip_suffix(".eml")) else {
+                report.unexpected_files += 1;
                 continue;
             };
             if !valid_id(id) {
-                return Err(StoreError::InvalidId);
+                report.unexpected_files += 1;
+                continue;
             }
             if entry.file_type()?.is_symlink() {
+                return Err(StoreError::UnsafePath);
+            }
+            if !entry.file_type()?.is_file() {
                 return Err(StoreError::UnsafePath);
             }
             let present: bool = self.connection.query_row(
@@ -499,6 +566,17 @@ impl Store {
             if entry.file_type()?.is_symlink() {
                 return Err(StoreError::UnsafePath);
             }
+            if !entry.file_type()?.is_file() {
+                return Err(StoreError::UnsafePath);
+            }
+            if !entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.strip_suffix(".part"))
+                .is_some_and(valid_id)
+            {
+                report.unexpected_files += 1;
+            }
             report.staging_files += 1;
         }
         Ok(report)
@@ -509,5 +587,7 @@ impl Store {
     }
 }
 
+#[cfg(test)]
+mod m1_tests;
 #[cfg(test)]
 mod tests;

@@ -8,11 +8,13 @@ import argparse
 from email.message import EmailMessage
 from email.policy import SMTP
 import json
+import os
 from pathlib import Path
 import re
 import smtplib
 import socket
 import subprocess
+import sqlite3
 import tempfile
 import time
 
@@ -51,6 +53,8 @@ def main():
         run(daemon, "check")
         run(daemon, "serve", success=False)
         assert not (base / "mail").exists(), "check/production refusal must not initialize storage"
+        run(control, "check-store", success=False)
+        assert not (base / "mail").exists(), "inspection must not create a missing store"
         run(control, "account", "add", "alice@example.com", "--quota-bytes", "1048576")
         log_path = base / "server.log"
 
@@ -107,6 +111,45 @@ def main():
             health = json.loads(run(control, "check-store").stdout)
             assert health["healthy"] and health["referenced_blobs"] == 1
 
+            accepted = [json.loads(line)["fields"] for line in log_path.read_text(encoding="utf-8").splitlines()
+                        if json.loads(line).get("event") == "message_accepted"][-1]
+            operation = json.loads(run(control, "operation", accepted["operation_id"]).stdout)["operation"]
+            assert operation["message_id"] == stored["message_id"]
+            # Construct a legacy-schema fixture only inside this script's fresh
+            # temporary store, after stopping the server. Preserve all mail rows.
+            connection = sqlite3.connect(base / "mail/meta.sqlite")
+            try:
+                connection.executescript("DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1;")
+            finally:
+                connection.close()
+            migration = json.loads(run(control, "migrations").stdout)
+            assert migration["schema_version"] == 2 and migration["history"][0]["adopted"]
+            assert json.loads(run(control, "mail", "list", "alice@example.com").stdout) == stored
+            orphan = base / "mail/blobs" / ("e" * 32 + ".eml")
+            stale = base / "mail/staging" / ("f" * 32 + ".part")
+            for file in [orphan, stale]:
+                file.write_bytes(b"unreferenced synthetic data")
+                os.utime(file, (1, 1))
+            preview = [json.loads(line) for line in run(control, "gc").stdout.splitlines()][-1]["gc_report"]
+            assert preview["candidates"] == 2 and preview["deleted"] == 0
+            assert orphan.exists() and stale.exists()
+            collected = [json.loads(line) for line in run(control, "gc", "--apply").stdout.splitlines()][-1]["gc_report"]
+            assert collected["deleted"] == 2 and not orphan.exists() and not stale.exists()
+            assert json.loads(run(control, "gc-history").stdout)["runs"][0]["status"] == "complete"
+            blob = base / "mail/blobs" / (operation["blob_id"] + ".eml")
+            assert blob.parent == base / "mail/blobs" and blob.read_bytes() == raw
+            blob.unlink()  # Synthetic missing-blob fixture; byte-exact copy retained above.
+            assert not json.loads(run(control, "check-store", success=False).stdout)["healthy"]
+            wrong = base / "wrong.eml"
+            wrong.write_bytes(b"wrong body")
+            run(control, "recover-blob", operation["blob_id"], "--source", str(wrong), success=False)
+            assert not blob.exists()
+            run(control, "recover-blob", operation["blob_id"], "--source", str(exported))
+            assert blob.read_bytes() == raw
+            run(control, "recover-blob", operation["blob_id"], "--source", str(exported), success=False)
+            run(control, "checkpoint")
+            assert json.loads(run(control, "check-store").stdout)["healthy"]
+
             with log_path.open("ab") as log:
                 process, client = start(log)
                 run(control, "mail", "list", "alice@example.com", success=False)
@@ -121,7 +164,8 @@ def main():
                 "strict CLI configuration", "production entry refused", "receive-only account",
                 "SMTP capability truthfulness", "relay denied", "SMTP final-250 acceptance",
                 "forced process termination", "byte-exact recovery/export", "no export overwrite",
-                "exclusive admin lock", "server restart"
+                "exclusive admin lock", "server restart", "operation lookup", "legacy schema adoption",
+                "GC preview and audited apply", "verified missing-blob recovery", "no recovery overwrite", "offline checkpoint"
             ]}, indent=2))
         finally:
             if client is not None:

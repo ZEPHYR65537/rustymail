@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前已有 0.1.0 L0 本地实验实现：SMTP 收信、流式落盘、SQLite 原子投递、离线管理和恢复检查。它还不是生产邮件服务器。** TLS、AUTH、IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回收信，生产启动入口明确拒绝。完整落地设计、Emacs 配置和后续生产目标保留在下方文档中。
+**当前是 0.2.0 L0 本地实验实现：SMTP 收信、流式落盘、SQLite 原子投递，以及 M1 的迁移记录、离线垃圾回收、操作结果查询和缺失正文恢复。它还不是生产邮件服务器。** TLS、AUTH、IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回收信，生产启动入口明确拒绝。M1 的故障实验与性能证据见[验证报告](reports/m1/validation.md)。
 
 ## 运行第一封邮件
 
@@ -42,7 +42,8 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | SIZE、8BITMIME、严格 CRLF 与点转义 | 不支持 SMTPUTF8、AUTH、STARTTLS、PIPELINING |
 | 25 MiB 有界流式收信、多收件人配额原子提交 | 无 MIME 语义处理；不添加 Received/Return-Path 头；仅合成实验邮件 |
 | 原文文件 + WAL/FULL 元数据、内部幂等键 | Linux 目录同步；Windows 只用于开发；断电可靠性未验收 |
-| 账号创建、分页列信、原文导出、完整性检查 | 离线 CLI；无在线管理、IMAP 或 GC |
+| 账号创建、分页列信、原文导出、完整性检查、离线 GC | GC 默认预览；仅回收无引用文件，不过期删除邮箱或投递历史 |
+| schema 1→2 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
 
 配置检查会验证未来配置字段，但不表示对应服务已实现。实验服务只绑定 `listeners.smtp`，不启用其余监听、指标或管理 socket。Emacs 生产配置维持 TLS 要求，当前不能连接这个无 TLS/IMAP 的实验接收器。
 
@@ -59,6 +60,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 9. [Emacs 使用手册](docs/08-emacs-client.md)：Gnus 收信、SMTP 发信、加密凭据与故障定位。
 10. [设计决策与参考资料](docs/09-decisions-and-references.md)：可复核的官方资料、更新策略和知识记录模板。
 11. [第一轮实现教程](docs/10-first-implementation.md)：从实际源码学习 TCP 分帧、状态机、异步取消、持久化与故障实验。
+12. [M1：故障、维护与实测](docs/11-m1-storage.md)：操作手册、故障边界、迁移与回收规则、Linux 实验。
 
 ## 配套文件
 
@@ -69,7 +71,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [deploy/rustymail.lab.toml](deploy/rustymail.lab.toml) | 可运行实验配置，显式禁用未实现的扫描和外发 |
 | [deploy/rustymail.example.toml](deploy/rustymail.example.toml) | 完整配置契约；`check` 可验证；扫描必需，因此不能用来启动实验接收器 |
 | [deploy/rustymail.service.in](deploy/rustymail.service.in) | 未来 Linux 服务模板；当前不可直接启动 |
-| [crates/store/migrations/0001.sql](crates/store/migrations/0001.sql) | 首个事务迁移，`user_version=1`；队列等表预留，业务尚未实现 |
+| [存储迁移](crates/store/migrations/0002.sql) | 当前 `user_version=2`，加入迁移与维护记录；保留所有已接受邮件 |
 | [实现验证报告](reports/0.1.0-lab/validation.md) | 当前实现的测试、故障模型、依赖和已知限制 |
 | [验证记录](docs/validation.md) | 本次实际运行的检查，以及仍未执行的验证 |
 

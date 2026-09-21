@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# Explicit opt-in for fault laboratories; no environment-triggered faults.
+test-support = []
+
 [dependencies]
 rustymail-core.workspace = true
 fs2.workspace = true
@@ -13,9 +17,15 @@ sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 tokio.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+serde_json.workspace = true
+
+[[example]]
+name = "m1_probe"
+required-features = ["test-support"]
 
 [lints]
 workspace = true

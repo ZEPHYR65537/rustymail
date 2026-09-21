@@ -8,7 +8,7 @@ use rustymail_protocol::{
     Action, Command, Envelope, LineDecoder, ParseError, Reply, Session, decode_data_line,
     parse_command,
 };
-use rustymail_store::{Acceptance, PreparedMessage, StagedMessage, StoreError};
+use rustymail_store::{Acceptance, PreparedMessage, StagedMessage, StorageRuntime, StoreError};
 use std::{
     collections::HashMap,
     future::Future,
@@ -73,10 +73,17 @@ impl Drop for ConnectionLease {
 
 impl LabServer {
     pub async fn bind(config: Config) -> Result<Self, ServerError> {
+        Self::bind_with_runtime(config, StorageRuntime::default()).await
+    }
+
+    pub async fn bind_with_runtime(
+        config: Config,
+        runtime: StorageRuntime,
+    ) -> Result<Self, ServerError> {
         config.require_lab_receiver()?;
         let listener = TcpListener::bind(config.listeners.smtp).await?;
         let for_worker = config.clone();
-        let worker = tokio::task::spawn_blocking(move || StoreWorker::start(&for_worker))
+        let worker = tokio::task::spawn_blocking(move || StoreWorker::start(&for_worker, runtime))
             .await
             .map_err(|_| ServerError::Task)??;
         Ok(Self {
@@ -353,24 +360,31 @@ async fn smtp_session(
                 // The result is ambiguous after dispatch if the reply channel
                 // fails or times out. In that case close without a false 4xx.
                 let Envelope { sender, recipients } = envelope;
+                let operation_id = Uuid::new_v4().simple().to_string();
                 let plan = Acceptance {
-                    operation_id: Uuid::new_v4().simple().to_string(),
+                    operation_id: operation_id.clone(),
                     sender,
                     recipients,
                 };
                 match timeout(Duration::from_secs(60), store.accept(message, plan)).await {
                     Ok(Ok(accepted)) => {
+                        log_event(
+                            "message_accepted",
+                            serde_json::json!({"message_id":accepted.message_id,"operation_id":operation_id}),
+                        );
                         write_response(
                             &mut write,
                             format!("250 2.0.0 Accepted {}\r\n", accepted.message_id).as_bytes(),
                         )
                         .await?;
-                        log_event(
-                            "message_accepted",
-                            serde_json::json!({"message_id":accepted.message_id}),
-                        );
                     }
-                    Ok(Err(StoreError::OutcomeUnknown)) | Err(_) => return Ok(()),
+                    Ok(Err(StoreError::OutcomeUnknown)) | Err(_) => {
+                        log_event(
+                            "acceptance_outcome_unknown",
+                            serde_json::json!({"operation_id":operation_id}),
+                        );
+                        return Ok(());
+                    }
                     Ok(Err(StoreError::Quota)) => {
                         reply(&mut write, Reply::new(452, "4.2.2 Mailbox quota exceeded")).await?
                     }

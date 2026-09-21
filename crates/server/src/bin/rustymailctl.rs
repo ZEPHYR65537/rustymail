@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use rustymail_core::{Address, config::Config};
 use rustymail_server::store_options;
-use rustymail_store::Store;
+use rustymail_store::{GcOptions, Store};
 use std::{fs::OpenOptions, path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
@@ -30,6 +30,32 @@ enum Command {
     },
     /// Check database/foreign keys and stream-verify every referenced blob.
     CheckStore,
+    /// Query an internal acceptance ID after an unknown commit outcome.
+    Operation { operation_id: String },
+    /// Show validated migration history (opens/upgrades a supported legacy store).
+    Migrations,
+    /// Preview stale temporary files and unreferenced blobs; --apply deletes.
+    Gc {
+        #[arg(long)]
+        apply: bool,
+        #[arg(long, default_value_t = 86400)]
+        min_age_seconds: u64,
+        #[arg(long, default_value_t = 1000)]
+        limit: usize,
+    },
+    /// Inspect durable maintenance runs, including interrupted runs.
+    GcHistory {
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Restore a missing referenced blob from an exact copy; never overwrites.
+    RecoverBlob {
+        blob_id: String,
+        #[arg(long)]
+        source: PathBuf,
+    },
+    /// Perform an offline WAL checkpoint, preserving FULL durability.
+    Checkpoint,
 }
 
 #[derive(Subcommand)]
@@ -71,8 +97,60 @@ fn main() -> ExitCode {
 fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load(args.config)?;
     config.require_lab_receiver()?;
-    let mut store = Store::open(&config.data_dir, store_options(&config))?;
+    let mut store = if matches!(&args.command, Command::Account { .. }) {
+        Store::open(&config.data_dir, store_options(&config))?
+    } else {
+        Store::open_existing(&config.data_dir, store_options(&config))?
+    };
     match args.command {
+        Command::Operation { operation_id } => {
+            println!(
+                "{}",
+                serde_json::json!({"operation":store.operation(&operation_id)?})
+            );
+        }
+        Command::Migrations => {
+            println!(
+                "{}",
+                serde_json::json!({"schema_version":rustymail_store::CURRENT_VERSION,"history":store.migration_history()?})
+            );
+        }
+        Command::Gc {
+            apply,
+            min_age_seconds,
+            limit,
+        } => {
+            use std::io::Write;
+            let output = std::io::stdout();
+            let mut output = output.lock();
+            let report = store.gc(
+                GcOptions {
+                    apply,
+                    min_age_seconds,
+                    limit,
+                },
+                |candidate| {
+                    writeln!(output, "{}", serde_json::json!({"gc_candidate":candidate}))?;
+                    output.flush()?;
+                    Ok(())
+                },
+            )?;
+            writeln!(output, "{}", serde_json::json!({"gc_report":report}))?;
+        }
+        Command::GcHistory { limit } => {
+            println!("{}", serde_json::json!({"runs":store.gc_history(limit)?}));
+        }
+        Command::RecoverBlob { blob_id, source } => {
+            let bytes = store.recover_blob(&blob_id, source)?;
+            println!(
+                "{}",
+                serde_json::json!({"recovered_blob":blob_id,"bytes":bytes})
+            );
+        }
+        Command::Checkpoint => {
+            store.checkpoint()?;
+            println!("{}", serde_json::json!({"checkpoint":"complete"}));
+        }
         Command::Account {
             command:
                 AccountCommand::Add {
@@ -151,6 +229,8 @@ fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 serde_json::json!({"healthy":report.healthy(),"referenced_blobs":report.referenced_blobs,
                 "missing_blobs":report.missing_blobs,"corrupt_blobs":report.corrupt_blobs,
                 "orphan_blobs":report.orphan_blobs,"staging_files":report.staging_files,
+                "unexpected_files":report.unexpected_files,"quota_mismatches":report.quota_mismatches,
+                "uid_mismatches":report.uid_mismatches,"delivery_mismatches":report.delivery_mismatches,
                 "directory_sync_supported":Store::directory_sync_supported()})
             );
             if !report.healthy() {
