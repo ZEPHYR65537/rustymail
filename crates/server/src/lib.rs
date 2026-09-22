@@ -3,6 +3,7 @@ pub mod admin;
 pub mod auth;
 mod auth_dialog;
 mod logging;
+pub mod relay;
 mod revocation;
 pub mod tls;
 mod trace;
@@ -13,14 +14,14 @@ use transport::{Role, Transport};
 pub use worker::store_options;
 use worker::{StoreClient, StoreWorker};
 
-use rustymail_core::config::{Config, ConfigError};
+use rustymail_core::config::{Config, ConfigError, DeliveryMode};
 use rustymail_protocol::{
     Action, Body, Command, Envelope, LineDecoder, ParseError, Reply, Session, decode_data_frame,
     parse_command,
 };
 use rustymail_store::{
-    Acceptance, PreparedMessage, Principal, StagedMessage, StorageRuntime, StoreError,
-    SubmissionIdentity,
+    Acceptance, PreparedMessage, Principal, QueueBody, RelayAcceptance, StagedMessage,
+    StorageRuntime, StoreError, SubmissionIdentity,
 };
 use std::{
     collections::HashMap,
@@ -64,6 +65,7 @@ pub struct LabServer {
     tls: Option<tls::TlsSettings>,
     auth: Option<Arc<auth::AuthService>>,
     admin: Option<admin::AdminListener>,
+    relay: Option<Arc<relay::RelayClient>>,
 }
 
 struct ConnectionLease {
@@ -110,21 +112,36 @@ impl LabServer {
             tls: None,
             auth: None,
             admin: None,
+            relay: None,
         })
     }
 
     /// Implicit TLS plus AUTH PLAIN on the loopback submissions listener.
     pub async fn bind_tls(config: Config) -> Result<Self, ServerError> {
-        Self::bind_secure(config, false).await
+        Self::bind_secure(config, false, false).await
     }
 
     /// Three loopback SMTP roles sharing one store and global admission budgets.
     pub async fn bind_smtp(config: Config) -> Result<Self, ServerError> {
-        Self::bind_secure(config, true).await
+        Self::bind_secure(config, true, false).await
     }
 
-    async fn bind_secure(config: Config, all_roles: bool) -> Result<Self, ServerError> {
-        config.require_lab_receiver()?;
+    pub async fn bind_relay(config: Config) -> Result<Self, ServerError> {
+        Self::bind_secure(config, true, true).await
+    }
+
+    async fn bind_secure(
+        config: Config,
+        all_roles: bool,
+        enable_relay: bool,
+    ) -> Result<Self, ServerError> {
+        let relay = if enable_relay {
+            config.require_lab_relay()?;
+            Some(Arc::new(relay::RelayClient::load(&config).await?))
+        } else {
+            config.require_lab_receiver()?;
+            None
+        };
         if !config.listeners.submissions.ip().is_loopback() {
             return Err(io::Error::other("lab TLS listener must use loopback").into());
         }
@@ -173,6 +190,7 @@ impl LabServer {
             tls: Some(tls),
             auth: Some(auth),
             admin,
+            relay,
         })
     }
 
@@ -208,11 +226,21 @@ impl LabServer {
         let ingest = Arc::new(Semaphore::new(slots));
         let counts = Arc::new(Mutex::new(HashMap::<IpAddr, usize>::new()));
         let mut tasks = JoinSet::new();
+        let (relay_stop, stop) = tokio::sync::watch::channel(false);
+        let relay_task = self.relay.as_ref().map(|relay| {
+            tokio::spawn(relay::serve(
+                self.worker.client.clone(),
+                relay.clone(),
+                self.config.clone(),
+                stop,
+            ))
+        });
         tokio::pin!(shutdown);
+        let mut service_error = None;
         log_event(
             "lab_smtp_ready",
             serde_json::json!({"bind":self.local_addr()?.to_string(),
-            "tls":self.tls.is_some(),"imap":false,"outbound":false,"scanning":false,
+            "tls":self.tls.is_some(),"imap":false,"outbound":self.relay.is_some(),"scanning":false,
             "directory_sync":rustymail_store::Store::directory_sync_supported()}),
         );
         loop {
@@ -222,7 +250,7 @@ impl LabServer {
                     if joined.is_some_and(|result| result.is_err()) { log_event("session_task_failed",serde_json::json!({})); }
                 }
                 incoming=admin::accept(&self.admin)=> {
-                    let stream=incoming?;
+                    let stream=match incoming {Ok(stream)=>stream,Err(error)=>{service_error=Some(error);break;}};
                     if let Ok(permit)=management.clone().try_acquire_owned()
                         && let (Some(auth),Some(tls))=(self.auth.clone(),self.tls.clone()) {
                         let client=self.worker.client.clone();let config=self.config.clone();
@@ -233,7 +261,7 @@ impl LabServer {
                     }
                 }
                 incoming = self.accept() => {
-                    let (stream, peer, role) = incoming?;
+                    let (stream, peer, role) = match incoming {Ok(incoming)=>incoming,Err(error)=>{service_error=Some(error);break;}};
                     let Ok(permit) = connections.clone().try_acquire_owned() else {
                         if role != Role::ImplicitSubmission { reject_connection(stream,b"421 4.3.2 Connection limit\r\n").await; } continue;
                     };
@@ -264,6 +292,7 @@ impl LabServer {
             }
         }
         drop(self.listener);
+        let _ = relay_stop.send(true);
         drop(self.submission_listener);
         drop(self.implicit_listener);
         let grace = Duration::from_secs(self.config.timeouts.shutdown_grace_seconds);
@@ -274,9 +303,20 @@ impl LabServer {
             tasks.abort_all();
             while tasks.join_next().await.is_some() {}
         }
+        let relay_failed = if let Some(task) = relay_task {
+            task.await.is_err()
+        } else {
+            false
+        };
         self.worker.shutdown().await?;
         log_event("stopped", serde_json::json!({}));
-        Ok(())
+        if relay_failed {
+            Err(ServerError::Task)
+        } else if let Some(error) = service_error {
+            Err(error.into())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -642,11 +682,18 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                     .map_err(|_| StoreError::WorkerUnavailable)
                     .and_then(|result| result)
                 } else {
-                    Ok(false)
+                    Ok(config.delivery.mode == DeliveryMode::Relay
+                        && principal.is_some()
+                        && role.submission()
+                        && encrypted)
                 };
                 match result {
                     Ok(exists) => {
-                        reply(&mut write, state.recipient_result(address, exists)).await?
+                        reply(
+                            &mut write,
+                            state.routed_recipient_result(address, exists, local),
+                        )
+                        .await?
                     }
                     Err(_) => {
                         reply(
@@ -750,8 +797,27 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                 // The result is ambiguous after dispatch if the reply channel
                 // fails or times out. In that case close without a false 4xx.
                 let Envelope {
-                    sender, recipients, ..
+                    sender,
+                    recipients,
+                    body,
+                    ..
                 } = envelope;
+                let (recipients, remote): (Vec<_>, Vec<_>) =
+                    recipients.into_iter().partition(|r| {
+                        config
+                            .local_domains
+                            .iter()
+                            .any(|d| d.eq_ignore_ascii_case(r.domain()))
+                    });
+                let relay = (!remote.is_empty()).then_some(RelayAcceptance {
+                    recipients: remote,
+                    body: if body == Body::SevenBit {
+                        QueueBody::SevenBit
+                    } else {
+                        QueueBody::EightBitMime
+                    },
+                    max_age_seconds: config.delivery.max_age_seconds,
+                });
                 let operation_id = operation.simple().to_string();
                 let plan = Acceptance {
                     operation_id: operation_id.clone(),
@@ -767,7 +833,7 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
                 };
                 match timeout(
                     Duration::from_secs(60),
-                    store.accept(message, plan, identity),
+                    store.accept(message, plan, identity, relay),
                 )
                 .await
                 {
@@ -857,7 +923,11 @@ async fn receive_message<R: AsyncRead + Unpin>(
     let mut in_headers = true;
     let mut headers = 0usize;
     let mut input_bytes = 0u64;
-    let mut filter = trace::HeaderFilter::default();
+    let mut filter = if submission {
+        trace::HeaderFilter::submission()
+    } else {
+        trace::HeaderFilter::default()
+    };
     let mut identities = SubmissionHeaders::default();
     let mut decoder = LineDecoder::new(1001);
     stage.append(prefix.as_bytes()).await?;

@@ -143,7 +143,8 @@ config_struct!(Relay {
     port: u16,
     tls: String,
     username: String,
-    password_file: PathBuf
+    password_file: PathBuf,
+    ca_file: Option<PathBuf>
 });
 config_struct!(Direct { mta_sts: bool, tls_policy: String, plaintext_exception_domains: Vec<String>, allow_private_mx_addresses: bool });
 config_struct!(Dkim {
@@ -414,7 +415,7 @@ impl Config {
             (1..=128).contains(&d.concurrency)
                 && d.per_domain_concurrency > 0
                 && d.per_domain_concurrency <= d.concurrency
-                && (1..=1024).contains(&d.batch_size),
+                && (1..=128).contains(&d.batch_size),
             "invalid delivery concurrency/batch",
         )?;
         require(
@@ -425,7 +426,7 @@ impl Config {
             "retry_seconds must be a nondecreasing schedule of 1800..86400 seconds",
         )?;
         require(
-            d.retry_jitter_percent <= 100 && (432000..=2592000).contains(&d.max_age_seconds),
+            d.retry_jitter_percent <= 50 && (432000..=604800).contains(&d.max_age_seconds),
             "invalid delivery jitter/max_age",
         )?;
         require(
@@ -498,14 +499,30 @@ impl Config {
 
     /// Lab support is intentionally narrower than the future configuration.
     pub fn require_lab_receiver(&self) -> Result<(), ConfigError> {
+        self.require_lab_storage()?;
+        require(
+            self.delivery.mode == DeliveryMode::Disabled,
+            "use serve-lab-relay to enable fixed-upstream delivery",
+        )
+    }
+
+    pub fn require_lab_relay(&self) -> Result<(), ConfigError> {
+        self.require_lab_storage()?;
+        require(
+            self.delivery.mode == DeliveryMode::Relay && self.relay.ca_file.is_some(),
+            "relay laboratory requires delivery.mode=relay and relay.ca_file",
+        )
+    }
+
+    pub fn require_lab_storage(&self) -> Result<(), ConfigError> {
         self.validate()?;
         require(
             self.mode == Mode::Lab && self.listeners.smtp.ip().is_loopback(),
             "only lab mode on loopback can run in this release",
         )?;
         require(
-            self.delivery.mode == DeliveryMode::Disabled,
-            "outbound delivery is not implemented",
+            self.delivery.mode != DeliveryMode::Direct,
+            "direct delivery is not implemented",
         )?;
         require(
             !self.spam.required,
@@ -528,6 +545,12 @@ mod tests {
             .unwrap()
             .require_lab_receiver()
             .unwrap();
+        let mut relay =
+            Config::parse(include_str!("../../../deploy/rustymail.relay-lab.toml")).unwrap();
+        relay.require_lab_relay().unwrap();
+        assert!(relay.require_lab_receiver().is_err());
+        relay.relay.ca_file = None;
+        assert!(relay.require_lab_relay().is_err());
     }
 
     #[test]

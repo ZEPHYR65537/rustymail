@@ -1,7 +1,7 @@
 use rustymail_core::{Address, config::Config};
 use rustymail_store::{
-    Acceptance, AcceptedMessage, PreparedMessage, StagedMessage, StorageRuntime, Store, StoreError,
-    StoreOptions, SubmissionIdentity,
+    Acceptance, AcceptedMessage, PreparedMessage, RelayAcceptance, StagedMessage, StorageRuntime,
+    Store, StoreError, StoreOptions, SubmissionIdentity,
 };
 use std::{sync::mpsc as std_mpsc, thread};
 use tokio::sync::{mpsc, oneshot};
@@ -12,6 +12,7 @@ enum Request {
         PreparedMessage,
         Acceptance,
         Option<Box<SubmissionIdentity>>,
+        Option<RelayAcceptance>,
         oneshot::Sender<Result<AcceptedMessage, StoreError>>,
     ),
 }
@@ -68,12 +69,18 @@ impl StoreWorker {
                 while let Some(request) = receiver.blocking_recv() {
                     match request {
                         Request::Call(call) => call(&mut store),
-                        Request::Accept(message, plan, identity, reply) => {
+                        Request::Accept(message, plan, identity, relay, reply) => {
                             // Once dispatched, acceptance finishes even if the
                             // client disconnects and drops its oneshot receiver.
-                            let result = match identity {
-                                Some(identity) => store.accept_submission(message, plan, *identity),
-                                None => store.accept(message, plan),
+                            let result = match (identity, relay) {
+                                (Some(identity), Some(relay)) => {
+                                    store.accept_relay_submission(message, plan, *identity, relay)
+                                }
+                                (Some(identity), None) => {
+                                    store.accept_submission(message, plan, *identity)
+                                }
+                                (None, None) => store.accept(message, plan),
+                                (None, Some(_)) => Err(StoreError::PermissionDenied),
                             };
                             let _ = reply.send(result);
                         }
@@ -143,6 +150,7 @@ impl StoreClient {
         message: PreparedMessage,
         plan: Acceptance,
         identity: Option<SubmissionIdentity>,
+        relay: Option<RelayAcceptance>,
     ) -> Result<AcceptedMessage, StoreError> {
         let (reply, result) = oneshot::channel();
         self.sender
@@ -150,6 +158,7 @@ impl StoreClient {
                 message,
                 plan,
                 identity.map(Box::new),
+                relay,
                 reply,
             ))
             .await

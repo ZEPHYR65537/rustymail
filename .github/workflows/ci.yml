@@ -89,6 +89,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Build disposable single-attempt SMTP client
+        run: cargo build -p rustymail-server --example m42_attempt --features test-support --locked
+      - name: Independent TLS relay and mixed durable submission
+        run: python scripts/m42_smoke.py
+      - name: Preserve M4.2 relay evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m42-relay-${{ matrix.os }}
+          path: reports/local/m42-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
+
   linux-storage-labs:
     needs: test
     runs-on: ubuntu-24.04
@@ -115,6 +128,10 @@ jobs:
         run: cargo build -p rustymail-server --example m2_certificates --release --locked
       - name: SMTP saturation, mixed TLS traffic and recovery
         run: python scripts/smtp_pressure.py
+      - name: Build optimized single-attempt SMTP probe
+        run: cargo build -p rustymail-server --example m42_attempt --features test-support --release --locked
+      - name: Measure TLS streaming without buffering a whole message
+        run: python scripts/relay_stream.py
       - name: Compare owned and reusable DATA framing
         run: cargo run -p rustymail-protocol --example framing --release --locked > reports/local/framing.json
       - name: Build static guest programs
@@ -135,6 +152,7 @@ jobs:
             reports/local/framing.json
             reports/local/powercut.json
             reports/local/smtp-pressure.json
+            reports/local/relay-stream.json
             reports/local/failed-*.log
           if-no-files-found: warn
           retention-days: 14

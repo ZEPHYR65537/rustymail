@@ -192,7 +192,7 @@ async fn main() -> ExitCode {
 
 async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load(args.config)?;
-    config.require_lab_receiver()?;
+    config.require_lab_storage()?;
     if let Some((request, secret_path, creates_secret)) = management_request(&args.command) {
         if creates_secret && secret_path.is_none() && !std::io::stdout().is_terminal() {
             return Err("credential creation needs a terminal or --secret-output; secrets are never command arguments".into());

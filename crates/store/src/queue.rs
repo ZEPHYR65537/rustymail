@@ -25,6 +25,7 @@ struct StoredQueueAcceptance {
     size: u64,
     body: Option<String>,
     age: Option<i64>,
+    imported: bool,
 }
 struct Candidate {
     id: String,
@@ -42,7 +43,7 @@ pub enum QueueBody {
     EightBitMime,
 }
 impl QueueBody {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Self::SevenBit => "7bit",
             Self::EightBitMime => "8bitmime",
@@ -143,6 +144,8 @@ pub struct QueueLease {
     sender: Option<Address>,
     body: QueueBody,
     blob_id: String,
+    stored_size: u64,
+    submission: bool,
 }
 impl QueueLease {
     pub fn id(&self) -> &str {
@@ -159,6 +162,19 @@ impl QueueLease {
     }
     pub fn body(&self) -> QueueBody {
         self.body
+    }
+    pub fn stored_size(&self) -> u64 {
+        self.stored_size
+    }
+    pub fn omitted_prefix(&self) -> String {
+        if self.submission {
+            format!(
+                "Return-Path: <{}>\r\n",
+                self.sender.as_ref().map_or("", Address::as_str)
+            )
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -199,11 +215,16 @@ impl Read for QueuedReader {
 
 /// Only normalized classifications are persisted; arbitrary peer replies might
 /// contain addresses, credentials or control sequences and never enter this API.
+#[derive(Debug, Serialize)]
 pub enum QueueResult {
     Delivered(u16),
     Temporary(u16),
     Permanent(u16),
     ConnectionLost,
+    /// Local policy/content failure, without fabricating an SMTP reply code.
+    Hold,
+    /// Relay configuration, authentication or TLS failure; retain responsibility.
+    Deferred,
 }
 
 #[derive(Default)]
@@ -269,6 +290,30 @@ fn check_lease(
         params![lease.id,lease.token,lease.generation], |r| r.get(0)).optional()?.ok_or(StoreError::StaleLease)
 }
 
+pub(crate) fn insert_relay(
+    tx: &Transaction<'_>,
+    id: &str,
+    recipients: &BTreeSet<String>,
+    body: QueueBody,
+    age: u64,
+    now: i64,
+) -> Result<(), StoreError> {
+    let expires = later(now, (age * 1000) as i64)?;
+    tx.execute(
+        "INSERT INTO queue_message VALUES(?1,?2,?3)",
+        params![id, body.name(), age as i64],
+    )?;
+    for recipient in recipients {
+        let domain = recipient
+            .rsplit_once('@')
+            .ok_or(StoreError::InvalidInput)?
+            .1;
+        tx.execute("INSERT INTO delivery(id,message_id,recipient,route,destination_domain,state,next_attempt_at_ms,expires_at_ms) VALUES(?1,?2,?3,'relay',?4,'pending',?5,?6)",
+            params![Uuid::new_v4().simple().to_string(),id,recipient,domain,now,expires])?;
+    }
+    Ok(())
+}
+
 impl Store {
     /// Atomically accept up to 100 remote responsibilities after blob durability.
     /// No local mailbox mutation, network access, or header rewriting occurs.
@@ -293,13 +338,12 @@ impl Store {
             .collect();
         let sender = plan.sender.as_ref().map_or("", Address::as_str);
         let now = self.runtime.now_ms()?;
-        let expires = later(now, (plan.max_age_seconds * 1000) as i64)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let previous: Option<StoredQueueAcceptance>=tx.query_row(
-            "SELECT m.id,m.reverse_path,b.sha256,b.size_bytes,q.body_mode,q.max_age_seconds FROM message m JOIN blob b ON b.id=m.blob_id LEFT JOIN queue_message q ON q.message_id=m.id WHERE m.ingest_key=?1",
-            [&plan.operation_id], |r| Ok(StoredQueueAcceptance {id:r.get(0)?,sender:r.get(1)?,hash:r.get(2)?,size:unsigned_column(r,3)?,body:r.get(4)?,age:r.get(5)?})).optional()?;
+            "SELECT m.id,m.reverse_path,b.sha256,b.size_bytes,q.body_mode,q.max_age_seconds,m.source='import' FROM message m JOIN blob b ON b.id=m.blob_id LEFT JOIN queue_message q ON q.message_id=m.id WHERE m.ingest_key=?1",
+            [&plan.operation_id], |r| Ok(StoredQueueAcceptance {id:r.get(0)?,sender:r.get(1)?,hash:r.get(2)?,size:unsigned_column(r,3)?,body:r.get(4)?,age:r.get(5)?,imported:r.get(6)?})).optional()?;
         if let Some(StoredQueueAcceptance {
             id,
             sender: old_sender,
@@ -307,13 +351,15 @@ impl Store {
             size,
             body,
             age,
+            imported,
         }) = previous
         {
             let old: BTreeSet<String> = tx
                 .prepare("SELECT recipient FROM delivery WHERE message_id=?1 AND route='relay'")?
                 .query_map([&id], |r| r.get(0))?
                 .collect::<Result<_, _>>()?;
-            if old_sender != sender
+            if !imported
+                || old_sender != sender
                 || hash != message.hash
                 || size != message.size
                 || old != recipients
@@ -333,18 +379,7 @@ impl Store {
             params![message.id,message.size as i64,message.hash,b"{}".as_slice(),now])?;
         tx.execute("INSERT INTO message(id,ingest_key,blob_id,source,reverse_path,accepted_at_ms) VALUES(?1,?2,?3,'import',?4,?5)",
             params![id,plan.operation_id,message.id,sender,now])?;
-        tx.execute(
-            "INSERT INTO queue_message VALUES(?1,?2,?3)",
-            params![id, plan.body.name(), plan.max_age_seconds as i64],
-        )?;
-        for recipient in recipients {
-            let domain = recipient
-                .rsplit_once('@')
-                .ok_or(StoreError::InvalidInput)?
-                .1;
-            tx.execute("INSERT INTO delivery(id,message_id,recipient,route,destination_domain,state,next_attempt_at_ms,expires_at_ms) VALUES(?1,?2,?3,'relay',?4,'pending',?5,?6)",
-                params![Uuid::new_v4().simple().to_string(),id,recipient,domain,now,expires])?;
-        }
+        insert_relay(&tx, &id, &recipients, plan.body, plan.max_age_seconds, now)?;
         self.runtime.hit(FaultPoint::BeforeCommit)?;
         self.runtime
             .hit(FaultPoint::Commit)
@@ -473,8 +508,8 @@ impl Store {
             if domains.get(recipient.domain()).copied().unwrap_or(0) >= policy.per_domain {
                 continue;
             }
-            let (sender,body,blob_id):(String,String,String)=tx.query_row(
-                "SELECT m.reverse_path,q.body_mode,m.blob_id FROM message m JOIN queue_message q ON q.message_id=m.id WHERE m.id=?1",[message_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            let (sender,body,blob_id,stored_size,submission):(String,String,String,u64,bool)=tx.query_row(
+                "SELECT m.reverse_path,q.body_mode,m.blob_id,b.size_bytes,m.source='submission' FROM message m JOIN queue_message q ON q.message_id=m.id JOIN blob b ON b.id=m.blob_id WHERE m.id=?1",[message_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,unsigned_column(r,3)?,r.get(4)?)))?;
             let sender = if sender.is_empty() {
                 None
             } else {
@@ -503,6 +538,8 @@ impl Store {
                 sender,
                 body,
                 blob_id,
+                stored_size,
+                submission,
             });
             if leases.len() == available {
                 break;
@@ -606,6 +643,12 @@ impl Store {
             QueueResult::ConnectionLost => {
                 ("deferred", None, "connection lost before body boundary")
             }
+            QueueResult::Hold => ("hold", None, "local outbound content or capability failure"),
+            QueueResult::Deferred if phase == "ready" => (
+                "deferred",
+                None,
+                "relay setup or authentication unavailable",
+            ),
             _ => return Err(StoreError::InvalidInput),
         };
         // A clock discontinuity must not prevent recording a known remote result.

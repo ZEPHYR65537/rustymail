@@ -25,6 +25,8 @@ enum Command {
     ServeLabTls,
     /// Three loopback roles: SMTP receive, implicit TLS and STARTTLS submission.
     ServeLabSmtp,
+    /// Three loopback roles and a verified, fixed-upstream relay worker.
+    ServeLabRelay,
     /// Reserved production entry point; always refuses in this release.
     Serve,
 }
@@ -68,6 +70,9 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         Command::ServeLabSmtp => {
             let server = LabServer::bind_smtp(config).await?;
             server.serve_until(shutdown_signal()).await?;
+        }
+        Command::ServeLabRelay => {
+            LabServer::bind_relay(config).await?.serve_until(shutdown_signal()).await?;
         }
     }
     Ok(())

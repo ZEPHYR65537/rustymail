@@ -325,17 +325,8 @@ impl Session {
             }
             Command::Rcpt(address) => match &self.transaction {
                 None => Action::Reply(Reply::new(503, "5.5.1 Send MAIL first")),
-                Some(tx)
-                    if tx
-                        .recipients
-                        .iter()
-                        .any(|old| old.as_str().eq_ignore_ascii_case(address.as_str())) =>
-                {
-                    Action::Reply(Reply::new(250, "2.1.5 Recipient accepted"))
-                }
-                Some(tx) if tx.recipients.len() >= self.max_recipients => {
-                    Action::Reply(Reply::new(452, "4.5.3 Too many recipients"))
-                }
+                // Only the router knows whether local account case folding is
+                // permitted. Deduplication and the cap belong in its callback.
                 Some(_) => Action::CheckRecipient(address),
             },
             Command::Data => {
@@ -355,17 +346,28 @@ impl Session {
     }
 
     pub fn recipient_result(&mut self, address: Address, exists: bool) -> Reply {
+        self.routed_recipient_result(address, exists, true)
+    }
+
+    pub fn routed_recipient_result(
+        &mut self,
+        address: Address,
+        exists: bool,
+        local: bool,
+    ) -> Reply {
         let Some(tx) = self.transaction.as_mut() else {
             return Reply::new(503, "5.5.1 Send MAIL first");
         };
         if !exists {
             return Reply::new(550, "5.1.1 Recipient unavailable; relay denied");
         }
-        if !tx
-            .recipients
-            .iter()
-            .any(|old| old.as_str().eq_ignore_ascii_case(address.as_str()))
-        {
+        if !tx.recipients.iter().any(|old| {
+            if local {
+                old.as_str().eq_ignore_ascii_case(address.as_str())
+            } else {
+                old == &address
+            }
+        }) {
             if tx.recipients.len() >= self.max_recipients {
                 return Reply::new(452, "4.5.3 Too many recipients");
             }
@@ -465,12 +467,13 @@ mod tests {
             Action::CheckRecipient(_)
         ));
         state.recipient_result(address, true);
-        for input in [
-            b"RCPT TO:<ALICE@example.test>".as_slice(),
-            b"NOOP anything",
-            b"HELP MAIL",
-            b"VRFY alice",
-        ] {
+        let Action::CheckRecipient(duplicate) =
+            state.apply(parse_command(b"RCPT TO:<ALICE@example.test>").unwrap())
+        else {
+            panic!("routing skipped");
+        };
+        assert_eq!(state.recipient_result(duplicate, true).code, 250);
+        for input in [b"NOOP anything".as_slice(), b"HELP MAIL", b"VRFY alice"] {
             assert!(matches!(
                 state.apply(parse_command(input).unwrap()),
                 Action::Reply(Reply {
@@ -479,15 +482,51 @@ mod tests {
                 })
             ));
         }
-        assert!(matches!(
-            state.apply(parse_command(b"RCPT TO:<bob@example.test>").unwrap()),
-            Action::Reply(Reply { code: 452, .. })
-        ));
+        let Action::CheckRecipient(other) =
+            state.apply(parse_command(b"RCPT TO:<bob@example.test>").unwrap())
+        else {
+            panic!("routing skipped");
+        };
+        assert_eq!(state.recipient_result(other, true).code, 452);
         let Action::BeginData(envelope) = state.apply(Command::Data) else {
             panic!("envelope lost");
         };
         assert_eq!(envelope.body, Body::EightBitMime);
         assert_eq!(envelope.recipients.len(), 1);
+    }
+
+    #[test]
+    fn remote_local_parts_are_distinct_but_domain_case_and_exact_duplicates_are_not() {
+        let mut state = Session::new(1024, 2);
+        state.apply(Command::Ehlo("client.test".into()));
+        state.apply(parse_command(b"MAIL FROM:<>").unwrap());
+        for (address, expected) in [
+            ("Case@remote.test", 250),
+            ("case@REMOTE.TEST", 250),
+            ("Case@REMOTE.TEST", 250),
+            ("third@remote.test", 452),
+        ] {
+            let Action::CheckRecipient(address) =
+                state.apply(Command::Rcpt(Address::parse(address).unwrap()))
+            else {
+                panic!("routing skipped");
+            };
+            assert_eq!(
+                state.routed_recipient_result(address, true, false).code,
+                expected
+            );
+        }
+        let Action::BeginData(envelope) = state.apply(Command::Data) else {
+            panic!("envelope lost")
+        };
+        assert_eq!(
+            envelope
+                .recipients
+                .iter()
+                .map(Address::as_str)
+                .collect::<Vec<_>>(),
+            ["Case@remote.test", "case@remote.test"]
+        );
     }
 
     #[test]

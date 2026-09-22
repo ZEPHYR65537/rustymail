@@ -23,7 +23,7 @@
 
 ## 2. 数据模型
 
-[schema.sql](examples/schema.sql) 是可供 SQLite 执行的结构草案；当前实际结构以[迁移目录](../crates/store/migrations/0003.sql)为准。0.2.0/schema 2 加入迁移与维护记录，见 [M1 教程](11-m1-storage.md)；0.7.0/schema 3 新增 `queue_message`、`queue_lease` 与部分索引，已实现持久队列 API，见 [M4.1 教程](17-m4-durable-queue.md)。网络投递、IMAP 和已接受消息的历史过期尚未实现；下文继续定义完整目标。核心关系如下：
+[schema.sql](examples/schema.sql) 是可供 SQLite 执行的结构草案；当前实际结构以[迁移目录](../crates/store/migrations/0003.sql)为准。0.2.0/schema 2 加入迁移与维护记录，见 [M1 教程](11-m1-storage.md)；0.7.0/schema 3 新增 `queue_message`、`queue_lease` 与部分索引，已实现持久队列 API，见 [M4.1 教程](17-m4-durable-queue.md)。0.8.0 已在 schema 3 上实现[原子混合接受及固定上游发送](18-m4-smtp-relay.md)，没有增加迁移；IMAP 和已接受消息的历史过期尚未实现；下文继续定义完整目标。核心关系如下：
 
 | 对象 | 唯一性 / 约束 | 用途 |
 | --- | --- | --- |

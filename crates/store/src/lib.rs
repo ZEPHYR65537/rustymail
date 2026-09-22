@@ -116,6 +116,15 @@ pub struct Acceptance {
     pub recipients: Vec<Address>,
 }
 
+/// Additional remote responsibilities committed together with local delivery.
+/// Caller supplies the canonical local representation with its generated
+/// Return-Path first; outbound projects away that verified first line.
+pub struct RelayAcceptance {
+    pub recipients: Vec<Address>,
+    pub body: QueueBody,
+    pub max_age_seconds: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct AcceptedMessage {
     pub message_id: String,
@@ -340,7 +349,7 @@ impl Store {
         plan: Acceptance,
         hook: impl Fn(&str),
     ) -> Result<AcceptedMessage, StoreError> {
-        self.accept_inner(message, plan, None, hook)
+        self.accept_inner(message, plan, None, None, hook)
     }
 
     pub fn accept_submission(
@@ -349,7 +358,17 @@ impl Store {
         plan: Acceptance,
         identity: SubmissionIdentity,
     ) -> Result<AcceptedMessage, StoreError> {
-        self.accept_inner(message, plan, Some(identity), |_| {})
+        self.accept_inner(message, plan, Some(identity), None, |_| {})
+    }
+
+    pub fn accept_relay_submission(
+        &mut self,
+        message: PreparedMessage,
+        local: Acceptance,
+        identity: SubmissionIdentity,
+        relay: RelayAcceptance,
+    ) -> Result<AcceptedMessage, StoreError> {
+        self.accept_inner(message, local, Some(identity), Some(relay), |_| {})
     }
 
     fn accept_inner(
@@ -357,17 +376,25 @@ impl Store {
         message: PreparedMessage,
         plan: Acceptance,
         identity: Option<SubmissionIdentity>,
+        relay: Option<RelayAcceptance>,
         hook: impl Fn(&str),
     ) -> Result<AcceptedMessage, StoreError> {
         if message.root != self.root
             || !valid_id(&plan.operation_id)
-            || plan.recipients.is_empty()
-            || plan.recipients.len() > 100
+            || plan.recipients.len() + relay.as_ref().map_or(0, |r| r.recipients.len()) == 0
+            || plan.recipients.len() + relay.as_ref().map_or(0, |r| r.recipients.len()) > 100
+            || relay.as_ref().is_some_and(|r| {
+                r.recipients.is_empty() || !(1..=604800).contains(&r.max_age_seconds)
+            })
         {
             return Err(StoreError::InvalidInput);
         }
         let sender = plan.sender.as_ref().map_or("", Address::as_str);
         let recipients: BTreeSet<String> = plan.recipients.iter().map(Address::local_key).collect();
+        let remote: BTreeSet<String> = relay
+            .as_ref()
+            .map(|r| r.recipients.iter().map(|a| a.as_str().to_owned()).collect())
+            .unwrap_or_default();
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -386,16 +413,26 @@ impl Store {
             "SELECT m.id,m.reverse_path,b.sha256,b.size_bytes,m.authenticated_account_id FROM message m JOIN blob b ON b.id=m.blob_id WHERE ingest_key=?1", [&plan.operation_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, unsigned_column(r,3)?, r.get(4)?))).optional()?;
         if let Some((id, original_sender, hash, size, original_account)) = previous {
-            let remote: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM delivery WHERE message_id=?1 AND route!='local')",
-                [&id],
-                |r| r.get(0),
-            )?;
             let old: BTreeSet<String> = transaction
-                .prepare("SELECT recipient FROM delivery WHERE message_id=?1")?
+                .prepare("SELECT recipient FROM delivery WHERE message_id=?1 AND route='local'")?
                 .query_map([&id], |r| r.get(0))?
                 .collect::<Result<_, _>>()?;
-            if remote
+            let old_remote: BTreeSet<String> = transaction
+                .prepare("SELECT recipient FROM delivery WHERE message_id=?1 AND route!='local'")?
+                .query_map([&id], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            let old_queue: Option<(String, i64)> = transaction
+                .query_row(
+                    "SELECT body_mode,max_age_seconds FROM queue_message WHERE message_id=?1",
+                    [&id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let new_queue = relay
+                .as_ref()
+                .map(|r| (r.body.name().to_owned(), r.max_age_seconds as i64));
+            if old_remote != remote
+                || old_queue != new_queue
                 || original_sender != sender
                 || hash != message.hash
                 || size != message.size
@@ -472,6 +509,16 @@ impl Store {
             transaction.execute(
                 "UPDATE account SET used_bytes=used_bytes+?1 WHERE id=?2",
                 params![(message.size * count) as i64, account_id],
+            )?;
+        }
+        if let Some(relay) = relay {
+            queue::insert_relay(
+                &transaction,
+                &id,
+                &remote,
+                relay.body,
+                relay.max_age_seconds,
+                now,
             )?;
         }
         hook("before_commit");
@@ -647,5 +694,7 @@ impl Store {
 
 #[cfg(test)]
 mod m1_tests;
+#[cfg(test)]
+mod m42_tests;
 #[cfg(test)]
 mod tests;

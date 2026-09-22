@@ -68,9 +68,16 @@ impl Trace<'_> {
 pub(crate) struct HeaderFilter {
     field_seen: bool,
     removing: bool,
+    remove_bcc: bool,
 }
 
 impl HeaderFilter {
+    pub fn submission() -> Self {
+        Self {
+            remove_bcc: true,
+            ..Self::default()
+        }
+    }
     pub fn retain(&mut self, line: &[u8]) -> Result<bool, ServerError> {
         let content = line
             .strip_suffix(b"\r\n")
@@ -95,7 +102,8 @@ impl HeaderFilter {
             return Err(ServerError::InvalidHeaders);
         }
         self.field_seen = true;
-        self.removing = name.eq_ignore_ascii_case(b"Return-Path");
+        self.removing = name.eq_ignore_ascii_case(b"Return-Path")
+            || (self.remove_bcc && name.eq_ignore_ascii_case(b"Bcc"));
         Ok(!self.removing)
     }
 }

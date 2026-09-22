@@ -45,6 +45,11 @@ def report(output, **values):
 
 
 class Lab:
+    command = 'serve-lab-smtp'
+
+    def configure(self, text, certificates):
+        return text
+
     def __init__(self, bin_dir, settings=None):
         self.binaries = Path(bin_dir).resolve()
         self.settings = settings or {}
@@ -86,6 +91,7 @@ class Lab:
                 text, count = re.subn(r'^'+key+r' = .*$', lambda _:f'{key} = {json.dumps(value)}', text, count=1, flags=re.M)
                 assert count == 1, (key, count)
             self.config = self.base/'server.toml'
+            text = self.configure(text, certs)
             self.config.write_text(text, encoding='utf-8')
             for address in ['alice@example.com', 'bob@example.com', 'postmaster@example.com']:
                 self.ctl('account', 'add', address)
@@ -96,7 +102,7 @@ class Lab:
             self.context = ssl.create_default_context(cafile=str(certs/'ca.pem'))
             self.log_path = self.base/'daemon.log'
             self.log = self.log_path.open('wb')
-            self.process = subprocess.Popen([str(self.binaries/('rustymaild'+self.suffix)), '--config', str(self.config), 'serve-lab-smtp'],
+            self.process = subprocess.Popen([str(self.binaries/('rustymaild'+self.suffix)), '--config', str(self.config), self.command],
                                             stdout=subprocess.DEVNULL, stderr=self.log, **self.hidden)
             deadline = time.monotonic()+30
             while True:

@@ -786,7 +786,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "rustymail-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "thiserror",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "rustymail-protocol"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "rustymail-core",
  "thiserror",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "rustymail-server"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "rustymail-store"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "fs2",
  "rusqlite",

@@ -11,7 +11,7 @@ use tokio_rustls::rustls::{
 };
 use zeroize::Zeroizing;
 
-fn material(path: &Path, limit: usize, private: bool) -> io::Result<Vec<u8>> {
+pub(crate) fn material(path: &Path, limit: usize, private: bool) -> io::Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > limit as u64 {
         return Err(io::Error::other("invalid TLS material path or size"));
