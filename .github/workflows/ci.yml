@@ -76,6 +76,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Build disposable outbound queue probe
+        run: cargo build -p rustymail-store --example m41_probe --features test-support --locked
+      - name: Offline queue and process-kill recovery boundaries
+        run: python scripts/m41_smoke.py
+      - name: Preserve M4.1 queue evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m41-queue-${{ matrix.os }}
+          path: reports/local/m41-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
+
   linux-storage-labs:
     needs: test
     runs-on: ubuntu-24.04

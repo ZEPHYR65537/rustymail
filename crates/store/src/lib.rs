@@ -3,11 +3,15 @@ mod blob;
 mod identity;
 mod maintenance;
 mod migration;
+mod queue;
 mod runtime;
 pub use blob::{PreparedMessage, StagedMessage};
 pub use identity::{CredentialRecord, CredentialSummary, Principal, SubmissionIdentity};
 pub use maintenance::{GcCandidate, GcOptions, GcReport, GcRun, OperationSummary};
 pub use migration::{CURRENT_VERSION, MigrationRecord};
+pub use queue::{
+    QueueBody, QueueLease, QueuePlan, QueuePolicy, QueueResult, QueueSummary, QueuedReader,
+};
 pub use runtime::{Clock, FaultPoint, StorageRuntime, SystemClock};
 
 use blob::{blob_path, private_directory, private_file, reject_symlink, sync_directory, valid_id};
@@ -73,6 +77,12 @@ pub enum StoreError {
     InvalidInput,
     #[error("storage worker unavailable")]
     WorkerUnavailable,
+    #[error("queue lease is stale or belongs to another store")]
+    StaleLease,
+    #[error("queue transition outcome unknown; stop the attempt and inspect durable state")]
+    QueueOutcomeUnknown,
+    #[error("wall clock discontinuity; stop claiming and inspect the clock before reopening")]
+    ClockChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +141,7 @@ pub struct IntegrityReport {
     pub quota_mismatches: u64,
     pub uid_mismatches: u64,
     pub delivery_mismatches: u64,
+    pub queue_mismatches: u64,
 }
 
 impl IntegrityReport {
@@ -141,6 +152,7 @@ impl IntegrityReport {
             && self.quota_mismatches == 0
             && self.uid_mismatches == 0
             && self.delivery_mismatches == 0
+            && self.queue_mismatches == 0
     }
 }
 
@@ -153,6 +165,7 @@ pub struct Store {
     lock: Arc<InstanceLock>,
     reserved_bytes: Arc<Mutex<u64>>,
     runtime: StorageRuntime,
+    queue: queue::QueueRuntime,
 }
 
 struct InstanceLock(File);
@@ -264,6 +277,7 @@ impl Store {
             lock,
             reserved_bytes: Arc::new(Mutex::new(0)),
             runtime,
+            queue: queue::QueueRuntime::default(),
         })
     }
 
@@ -372,11 +386,17 @@ impl Store {
             "SELECT m.id,m.reverse_path,b.sha256,b.size_bytes,m.authenticated_account_id FROM message m JOIN blob b ON b.id=m.blob_id WHERE ingest_key=?1", [&plan.operation_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, unsigned_column(r,3)?, r.get(4)?))).optional()?;
         if let Some((id, original_sender, hash, size, original_account)) = previous {
+            let remote: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM delivery WHERE message_id=?1 AND route!='local')",
+                [&id],
+                |r| r.get(0),
+            )?;
             let old: BTreeSet<String> = transaction
                 .prepare("SELECT recipient FROM delivery WHERE message_id=?1")?
                 .query_map([&id], |r| r.get(0))?
                 .collect::<Result<_, _>>()?;
-            if original_sender != sender
+            if remote
+                || original_sender != sender
                 || hash != message.hash
                 || size != message.size
                 || old != recipients
@@ -524,6 +544,7 @@ impl Store {
             quota_mismatches,
             uid_mismatches,
             delivery_mismatches,
+            queue_mismatches: self.queue_integrity_mismatches()?,
             ..IntegrityReport::default()
         };
         let mut statement = self

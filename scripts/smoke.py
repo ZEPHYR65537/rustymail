@@ -125,11 +125,11 @@ def main():
             # temporary store, after stopping the server. Preserve all mail rows.
             connection = sqlite3.connect(base / "mail/meta.sqlite")
             try:
-                connection.executescript("DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1;")
+                connection.executescript("DROP INDEX queue_ready; DROP INDEX queue_recovery; DROP INDEX queue_list; DROP TABLE queue_lease; DROP TABLE queue_message; DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1;")
             finally:
                 connection.close()
             migration = json.loads(run(control, "migrations").stdout)
-            assert migration["schema_version"] == 2 and migration["history"][0]["adopted"]
+            assert migration["schema_version"] == 3 and migration["history"][0]["adopted"]
             assert json.loads(run(control, "mail", "list", "alice@example.com").stdout) == stored
             orphan = base / "mail/blobs" / ("e" * 32 + ".eml")
             stale = base / "mail/staging" / ("f" * 32 + ".part")

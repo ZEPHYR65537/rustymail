@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use rustymail_core::{Address, config::Config};
 use rustymail_server::{admin::AdminRequest, store_options};
-use rustymail_store::{GcOptions, Store};
+use rustymail_store::{GcOptions, QueueBody, QueuePlan, Store};
 use std::{
     fs::OpenOptions,
     io::{IsTerminal, Write},
@@ -78,6 +78,52 @@ enum Command {
     },
     /// Perform an offline WAL checkpoint, preserving FULL durability.
     Checkpoint,
+    /// Offline relay queue laboratories and administration; never sends mail.
+    Queue {
+        #[command(subcommand)]
+        command: QueueCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum QueueCommand {
+    List {
+        #[arg(long, default_value = "")]
+        after_id: String,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Store synthetic outbound bytes. No SMTP authorization or transmission.
+    ImportLab {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        operation_id: String,
+        #[arg(long)]
+        sender: Option<String>,
+        #[arg(long = "recipient", required = true)]
+        recipients: Vec<String>,
+        #[arg(long,default_value="7bit",value_parser=["7bit","8bitmime"])]
+        body: String,
+        #[arg(long, default_value_t = 432000)]
+        max_age_seconds: u64,
+    },
+    Recover {
+        #[arg(long, default_value_t = 128)]
+        limit: usize,
+    },
+    Hold {
+        delivery_id: String,
+    },
+    Retry {
+        delivery_id: String,
+        /// A held/uncertain attempt may already have reached the remote mailbox.
+        #[arg(long)]
+        allow_duplicate: bool,
+        /// Explicitly renew an expired task's configured lifetime.
+        #[arg(long)]
+        extend_expired: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -267,6 +313,88 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             store.checkpoint()?;
             println!("{}", serde_json::json!({"checkpoint":"complete"}));
         }
+        Command::Queue { command } => match command {
+            QueueCommand::List { after_id, limit } => {
+                for row in store.queue_list(&after_id, limit)? {
+                    println!("{}", serde_json::to_string(&row)?);
+                }
+            }
+            QueueCommand::ImportLab {
+                source,
+                operation_id,
+                sender,
+                recipients,
+                body,
+                max_age_seconds,
+            } => {
+                use tokio::io::AsyncReadExt;
+                let sender = sender.as_deref().map(Address::parse).transpose()?;
+                let recipients = recipients
+                    .iter()
+                    .map(|r| Address::parse(r))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if recipients.iter().any(|r| {
+                    config
+                        .local_domains
+                        .iter()
+                        .any(|d| d.eq_ignore_ascii_case(r.domain()))
+                }) {
+                    return Err("queue import-lab requires remote recipient domains".into());
+                }
+                let mut file = tokio::fs::File::open(source).await?;
+                if !file.metadata().await?.is_file() {
+                    return Err("source must be a regular file".into());
+                }
+                let mut stage = store.stage()?;
+                let mut buffer = vec![0; config.limits.stream_buffer_bytes];
+                loop {
+                    let count = file.read(&mut buffer).await?;
+                    if count == 0 {
+                        break;
+                    }
+                    stage.append(&buffer[..count]).await?;
+                }
+                let result = store.enqueue(
+                    stage.prepare().await?,
+                    QueuePlan {
+                        operation_id,
+                        sender,
+                        recipients,
+                        body: if body == "7bit" {
+                            QueueBody::SevenBit
+                        } else {
+                            QueueBody::EightBitMime
+                        },
+                        max_age_seconds,
+                    },
+                )?;
+                println!(
+                    "{}",
+                    serde_json::json!({"message_id":result.message_id,"already_committed":result.already_committed,"transmitted":false})
+                );
+            }
+            QueueCommand::Recover { limit } => {
+                println!(
+                    "{}",
+                    serde_json::json!({"recovered":store.queue_recover(limit)?,"scan_limit":limit})
+                );
+            }
+            QueueCommand::Hold { delivery_id } => {
+                store.queue_hold(&delivery_id)?;
+                println!("{}", serde_json::json!({"held":delivery_id}));
+            }
+            QueueCommand::Retry {
+                delivery_id,
+                allow_duplicate,
+                extend_expired,
+            } => {
+                store.queue_retry(&delivery_id, allow_duplicate, extend_expired)?;
+                println!(
+                    "{}",
+                    serde_json::json!({"scheduled":delivery_id,"transmitted":false})
+                );
+            }
+        },
         Command::Account {
             command:
                 AccountCommand::Add {
@@ -347,6 +475,7 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 "orphan_blobs":report.orphan_blobs,"staging_files":report.staging_files,
                 "unexpected_files":report.unexpected_files,"quota_mismatches":report.quota_mismatches,
                 "uid_mismatches":report.uid_mismatches,"delivery_mismatches":report.delivery_mismatches,
+                "queue_mismatches":report.queue_mismatches,
                 "directory_sync_supported":Store::directory_sync_supported()})
             );
             if !report.healthy() {

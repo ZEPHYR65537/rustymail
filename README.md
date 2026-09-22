@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.6.0 / M3.3 L0 实验实现：已有存储恢复、身份/TLS、三个 SMTP 入口、最终本地交付及输入契约实验。它还不是生产邮件服务器。** IMAP、外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或进入[输入契约与压力实验](docs/16-m3-input-contract.md)。实际验收状态以 [M3.3 报告](reports/m3.3/validation.md)为准；下一步为 M4 持久队列与中继。
+**当前是 0.7.0 / M4.1 L0 实验实现：已有存储恢复、身份/TLS、三个 SMTP 入口、本地交付及持久队列基础。它还不是生产邮件服务器。** IMAP、网络外发、域认证和反垃圾尚未实现；程序只允许环回实验，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或进入[持久队列与不确定结果](docs/17-m4-durable-queue.md)。实际验收状态以 [M4.1 报告](reports/m4.1/validation.md)为准；下一步为 M4.2 固定上游 TLS 中继及接受侧集成。
 
 0.3.1 修复磁盘任务取消、撤销通知丢失和管理响应超限，复用 DATA 行缓冲并收紧组合资源预算。原理与保留限制见[取消与资源边界教程](docs/13-cancellation-and-bounds.md)，回归证据见[修复验证报告](reports/0.3.1/validation.md)。
 
@@ -49,7 +49,8 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | 25 MiB 有界流式收信、Received/Return-Path、多收件人原子交付 | 客户端上限外另预约 2 KiB；配额与导出以最终存储字节为准；无 MIME 语义处理 |
 | 原文文件 + WAL/FULL 元数据、内部幂等键 | Linux ext4/QEMU 断电及实际磁盘满实验通过；物理掉电与生产存储栈待验收；Windows 只用于开发 |
 | 账号创建、分页列信、原文导出、完整性检查、离线 GC | GC 默认预览；仅回收无引用文件，不过期删除邮箱或投递历史 |
-| schema 1→2 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
+| schema 1/2→3 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
+| 持久入队、逐收件人结果、租约、退避、hold/uncertain | 离线实验/API；有界扫描、流式校验；尚无后台发送、混合收件人接受或 DSN |
 
 配置检查会验证未来配置字段，但不表示对应服务已实现。`serve-lab` 只绑定 `listeners.smtp`；`serve-lab-tls` 只绑定 `listeners.submissions`；新 `serve-lab-smtp` 同时绑定 smtp/submissions/submission，后两种启动模式在 Linux 启用私有管理 socket。均无指标服务和 IMAP。Emacs 配置维持 TLS 要求；完整 Gnus 收发互通等待 M5。
 
@@ -72,6 +73,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 15. [M3.1：入口职责与 STARTTLS](docs/14-m3-starttls.md)：共享准入、协议切换、预读丢弃、状态重置及独立客户端反例。
 16. [M3.2：最终本地交付](docs/15-m3-local-delivery.md)：追踪字段、三种字节表示、流式过滤、共享文件和幂等重放。
 17. [M3.3：输入契约与资源恢复](docs/16-m3-input-contract.md)：编码协商、回复分类、状态枚举、48 行权限矩阵和有限压力验收。
+18. [M4.1：持久队列与不确定结果](docs/17-m4-durable-queue.md)：原子入队、逐人责任、租约生命周期、有限扫描、时钟与强杀恢复。
 
 ## 配套文件
 
@@ -83,15 +85,16 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [deploy/rustymail.tls-lab.toml](deploy/rustymail.tls-lab.toml) | TLS/身份与三入口实验；启动命令决定活跃端口，见 M2/M3.1 教程 |
 | [deploy/rustymail.example.toml](deploy/rustymail.example.toml) | 完整配置契约；`check` 可验证；扫描必需，因此不能用来启动实验接收器 |
 | [deploy/rustymail.service.in](deploy/rustymail.service.in) | 未来 Linux 服务模板；当前不可直接启动 |
-| [存储迁移](crates/store/migrations/0002.sql) | 当前 `user_version=2`，加入迁移与维护记录；保留所有已接受邮件 |
+| [存储迁移](crates/store/migrations/0003.sql) | 当前 `user_version=3`，新增队列表示、尝试阶段与索引；保留所有已接受邮件 |
 | [第一轮验证报告](reports/0.1.0-lab/validation.md) | 0.1.0 的历史测试、依赖和进程故障证据 |
 | [M1 验证报告](reports/m1/validation.md) | 0.2.0 的迁移、维护、Linux VM 故障与性能原始数据 |
 | [M2 验证报告](reports/m2/validation.md) | 0.3.0 的 TLS、身份、Unix 管理证据及依赖审计 |
 | [M3.1 验证报告](reports/m3.1/validation.md) | 0.4.0 的三入口与 STARTTLS、两平台协议及 Linux 存储故障回归 |
 | [M3.2 验证报告](reports/m3.2/validation.md) | 0.5.0 的交付头部、大小/配额、共享/重放、存储故障及匿名性能数据 |
 | [M3.3 验证报告](reports/m3.3/validation.md) | 0.6.0 的输入契约、角色矩阵、容量拒绝和恢复证据 |
+| [M4.1 验证报告](reports/m4.1/validation.md) | 0.7.0 的队列、租约、故障恢复及原有能力回归证据 |
 | [验证记录](docs/validation.md) | 设计阶段的历史静态检查，以及各阶段验证报告入口 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。
 
-设计基线日期：2026-09-21。所有设计解释使用中文；代码标识符与协议报文保留英文。
+设计基线日期：2026-09-22。所有设计解释使用中文；代码标识符与协议报文保留英文。

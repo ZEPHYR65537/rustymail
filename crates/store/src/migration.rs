@@ -3,12 +3,13 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 pub(crate) const BASE: &str = include_str!("../migrations/0001.sql");
 const MAINTENANCE: &str = include_str!("../migrations/0002.sql");
-const MIGRATIONS: [(u32, &str, &str); 2] = [
+const MIGRATIONS: [(u32, &str, &str); 3] = [
     (1, "initial_store", BASE),
     (2, "maintenance_history", MAINTENANCE),
+    (3, "outbound_queue", include_str!("../migrations/0003.sql")),
 ];
 
 #[derive(Debug, Serialize)]

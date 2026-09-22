@@ -27,5 +27,9 @@ serde_json.workspace = true
 name = "m1_probe"
 required-features = ["test-support"]
 
+[[example]]
+name = "m41_probe"
+required-features = ["test-support"]
+
 [lints]
 workspace = true

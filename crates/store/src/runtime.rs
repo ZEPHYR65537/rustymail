@@ -1,13 +1,18 @@
 use crate::StoreError;
 use std::{
     io,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, OnceLock},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-/// Wall-clock timestamps only. Network deadlines use Tokio's monotonic clock.
+/// Wall-clock persistence and monotonic elapsed time for discontinuity checks.
+/// Network deadlines separately use Tokio's monotonic clock.
 pub trait Clock: Send + Sync {
     fn now_ms(&self) -> Result<i64, StoreError>;
+    fn monotonic_ms(&self) -> u64 {
+        static ORIGIN: OnceLock<Instant> = OnceLock::new();
+        u64::try_from(ORIGIN.get_or_init(Instant::now).elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
 }
 
 pub struct SystemClock;
@@ -42,6 +47,8 @@ pub enum FaultPoint {
     GcPlanned,
     GcUnlinked,
     GcDirectorySync,
+    QueueBeforeCommit,
+    QueueAfterCommit,
 }
 
 impl FaultPoint {
@@ -66,6 +73,8 @@ impl FaultPoint {
             Self::GcPlanned => "gc_planned",
             Self::GcUnlinked => "gc_unlinked",
             Self::GcDirectorySync => "gc_directory_sync",
+            Self::QueueBeforeCommit => "queue_before_commit",
+            Self::QueueAfterCommit => "queue_after_commit",
         }
     }
 }
@@ -110,6 +119,9 @@ impl StorageRuntime {
             return Err(StoreError::InvalidInput);
         }
         Ok(value)
+    }
+    pub(crate) fn monotonic_ms(&self) -> u64 {
+        self.clock.monotonic_ms()
     }
     pub(crate) fn hit(&self, point: FaultPoint) -> io::Result<()> {
         #[cfg(any(test, feature = "test-support"))]

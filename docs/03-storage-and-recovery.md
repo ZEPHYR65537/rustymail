@@ -23,7 +23,7 @@
 
 ## 2. 数据模型
 
-[schema.sql](examples/schema.sql) 是可供 SQLite 执行的结构草案；L0 已将其转换为[首个迁移](../crates/store/migrations/0001.sql)。0.2.0 使用 `PRAGMA user_version=2`，加入迁移摘要、维护执行和 GC 动作记录，实现账号、本地接受、配额、原文检查、离线 orphan GC 和精确副本恢复，操作见 [M1 教程](11-m1-storage.md)。队列执行、IMAP 和已接受消息的历史过期尚未实现；下文继续定义完整目标。核心关系如下：
+[schema.sql](examples/schema.sql) 是可供 SQLite 执行的结构草案；当前实际结构以[迁移目录](../crates/store/migrations/0003.sql)为准。0.2.0/schema 2 加入迁移与维护记录，见 [M1 教程](11-m1-storage.md)；0.7.0/schema 3 新增 `queue_message`、`queue_lease` 与部分索引，已实现持久队列 API，见 [M4.1 教程](17-m4-durable-queue.md)。网络投递、IMAP 和已接受消息的历史过期尚未实现；下文继续定义完整目标。核心关系如下：
 
 | 对象 | 唯一性 / 约束 | 用途 |
 | --- | --- | --- |
@@ -35,6 +35,7 @@
 | message | 入站 operation_id 唯一 | 信封发件人、来源和接受时刻 |
 | mailbox_message | `(mailbox_id, uid)` 唯一 | 消息与邮箱关系、flags、internaldate |
 | delivery | `(message_id, recipient)` 唯一 | 每个实际收件人的本地/远程投递责任 |
+| queue_message / queue_lease | 分别引用 message / delivery | 外发 BODY/寿命与当前尝试阶段；schema 3 实现，尚无网络执行器 |
 | mailbox_event | 邮箱内事件序号唯一 | 多会话有序通知与恢复 |
 | notification | 每条 delivery 的报告类型唯一 | 失败通知的内部幂等键 |
 
@@ -90,7 +91,7 @@ mailbox_event 是持久有序日志。事件保留窗口与活跃会话游标关
 
 调度线程每次最多取 128 个到期任务，为每条远端收件人建立 `lease_token`、`lease_until`、`generation`。取得任务和状态迁移是数据库事务；投递完成用 token/generation 条件更新，防止旧 worker 覆盖新结果。
 
-活跃工作必须续租；同一进程里不能仅因时间到期就并发重新派发仍在发送的任务。租约和 fencing 只能保护本地状态，不能撤回已发送到远端的 DATA。重启时不存在旧进程的正常工作，过期租约恢复为可重试；单实例锁防止两个服务同时工作。
+活跃工作必须续租；同一进程里不能仅因时间到期就并发重新派发仍在发送的任务。租约和 fencing 只能保护本地状态，不能撤回已发送到远端的 DATA。M4.1 由任务/正文读者持有 guard 保护实例锁与额度；失去真实 owner 的任务按持久阶段恢复：ready 延期、body 进入 uncertain，不自动重试。单实例锁防止两个 Store 同时工作；不能把所有过期租约都当成未发送。实际 API 与边界见[第 17 章](17-m4-durable-queue.md)。
 
 所有 UTC 时刻由统一 clock 接口读取，间隔超时用 monotonic clock。时间回拨或超前应告警；队列恢复不能把时钟跳变当成海量永久失败。
 

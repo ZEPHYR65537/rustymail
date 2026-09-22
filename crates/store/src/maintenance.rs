@@ -65,11 +65,12 @@ pub struct GcRun {
 
 impl Store {
     fn require_idle(&self) -> Result<(), StoreError> {
-        if *self
-            .reserved_bytes
-            .lock()
-            .map_err(|_| StoreError::WorkerUnavailable)?
-            != 0
+        if self.queue.active()
+            || *self
+                .reserved_bytes
+                .lock()
+                .map_err(|_| StoreError::WorkerUnavailable)?
+                != 0
         {
             return Err(StoreError::MaintenanceBusy);
         }

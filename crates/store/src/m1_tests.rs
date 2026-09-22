@@ -362,7 +362,7 @@ async fn recovery_accepts_only_a_matching_copy_and_never_overwrites() {
 
 fn legacy(root: &Path) {
     let store = Store::open(root, options()).unwrap();
-    store.connection.execute_batch("DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1;").unwrap();
+    store.connection.execute_batch("DROP INDEX queue_ready; DROP INDEX queue_recovery; DROP INDEX queue_list; DROP TABLE queue_lease; DROP TABLE queue_message; DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1;").unwrap();
 }
 
 #[test]
@@ -396,7 +396,7 @@ fn migration_is_atomic_adopts_only_the_exact_legacy_schema_and_checks_history() 
         }
         let store = Store::open_existing(&root, options()).unwrap();
         let history = store.migration_history().unwrap();
-        assert_eq!(history.len(), 2);
+        assert_eq!(history.len(), CURRENT_VERSION as usize);
         assert!(history[0].adopted);
         assert!(!history[1].adopted);
         store
