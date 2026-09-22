@@ -11,6 +11,7 @@ import re
 import socket
 import sqlite3
 import ssl
+import stat
 import subprocess
 import tempfile
 import threading
@@ -227,7 +228,7 @@ class RelayLab(Lab):
                     assert client.noop()[0] == 250
                 return
             except OSError:
-                assert self.process.poll() is None and time.monotonic() < deadline
+                assert self.process.poll() is None and time.monotonic() < deadline, self.log_path.read_text(encoding='utf-8')
                 time.sleep(.05)
 
     def __exit__(self,*args):
@@ -350,8 +351,18 @@ def main():
         assert lab.peer.body_seen.wait(15)
         with closing(sqlite3.connect(lab.base/'mail/meta.sqlite')) as db:
             assert db.execute('SELECT phase FROM queue_lease').fetchall() == [('body',)]
+        admin_path = lab.base/'admin/admin.sock'
+        admin_before = admin_path.lstat() if os.name == 'posix' else None
         lab.process.kill()
         lab.process.wait(timeout=10)
+        # Model explicit operator recovery only for this known, reaped child
+        # and its unchanged socket inside our private temporary directory.
+        if admin_before:
+            current = admin_path.lstat()
+            assert stat.S_ISSOCK(current.st_mode) and current.st_uid == os.getuid()
+            assert (current.st_dev,current.st_ino) == (admin_before.st_dev,admin_before.st_ino)
+            assert admin_path.parent.stat().st_mode & 0o077 == 0
+            admin_path.unlink()
         lab.peer.release_final.set()
         lab.peer.scenario = 'ok'
         lab.restart()
@@ -360,9 +371,9 @@ def main():
         time.sleep(2)
         assert len([r for r in lab.peer.records if r['body'] is not None]) == 1
         lab.check_store(1)
-        checks.append('R05: kill the real relay process after peer receives DATA and before final response; restart preserves uncertain without resending')
+        checks.append('R05: kill real relay after peer receives DATA; supervised restart (remove known stale Unix admin socket after reaping child) preserves uncertain without resending')
     report(args.output, checks=checks, attempts=attempts, queue_initial=initial,queue_after_retry=retried,
-           crash_recovery=crash_recovery,external_messages=0)
+           crash_recovery=crash_recovery,stale_admin_socket_removed=admin_before is not None,external_messages=0)
 
 
 if __name__ == '__main__':
