@@ -464,7 +464,7 @@ fn retry_jitter_and_configuration_have_finite_checked_bounds() {
     for attempt in [1, 2, 3, 4, 100, u64::MAX] {
         let base = p.retry_seconds[(attempt - 1).min(3) as usize] * 1000;
         let delay = p.delay_ms("11111111111111111111111111111111", attempt) as u64;
-        assert!((base * 80 / 100..=base * 120 / 100).contains(&delay));
+        assert!((base..=base * 120 / 100).contains(&delay));
     }
     assert!(
         QueuePolicy {

@@ -104,7 +104,8 @@ impl QueuePolicy {
         digest.update(attempts.to_be_bytes());
         let hash = digest.finalize();
         let random = u64::from_be_bytes(hash[..8].try_into().expect("eight bytes"));
-        (base - spread + random % (2 * spread + 1)) as i64
+        // Positive jitter keeps the configured minimum delay intact.
+        (base + random % (spread + 1)) as i64
     }
 }
 
