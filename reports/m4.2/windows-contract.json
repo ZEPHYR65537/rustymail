@@ -1,0 +1,417 @@
+{
+  "checks": [
+    "C01: exact pre/post TLS and AUTH capability sets; unauthenticated submission denied",
+    "C02: parameter grammar, HELO negotiation, duplicate limit, HELP/VRFY, failed MAIL and reset isolation",
+    "C03: 48 role/sender/recipient combinations deny open relay and unauthorized send-as",
+    "C04: 512/538 command limits include CRLF; NUL and bare CR/LF close the connection",
+    "C05: undeclared high-bit data, binary NUL, smuggling delimiters, overlong lines and SMTPUTF8 headers rejected without suffix execution",
+    "C06: bytewise DATA writes, 1001-byte stuffed wire line and coalesced commands preserve content/order",
+    "C07: slow DATA line deadline is absolute and releases the connection",
+    "C08: reopened store has only acknowledged messages; retained bytes exact; staging empty; secrets absent from logs"
+  ],
+  "relay_matrix": [
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "",
+      "recipient": "alice@example.com",
+      "mail": 250,
+      "rcpt": 250
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "",
+      "recipient": "missing@example.com",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "",
+      "recipient": "target@remote.test",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "alice@example.com",
+      "recipient": "alice@example.com",
+      "mail": 250,
+      "rcpt": 250
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "alice@example.com",
+      "recipient": "missing@example.com",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "alice@example.com",
+      "recipient": "target@remote.test",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "forged@example.com",
+      "recipient": "alice@example.com",
+      "mail": 250,
+      "rcpt": 250
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "forged@example.com",
+      "recipient": "missing@example.com",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "forged@example.com",
+      "recipient": "target@remote.test",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "sender@remote.test",
+      "recipient": "alice@example.com",
+      "mail": 250,
+      "rcpt": 250
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "sender@remote.test",
+      "recipient": "missing@example.com",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "smtp",
+      "authenticated": false,
+      "sender": "sender@remote.test",
+      "recipient": "target@remote.test",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "",
+      "recipient": "alice@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "",
+      "recipient": "missing@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "",
+      "recipient": "target@remote.test",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "alice@example.com",
+      "recipient": "alice@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "alice@example.com",
+      "recipient": "missing@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "alice@example.com",
+      "recipient": "target@remote.test",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "forged@example.com",
+      "recipient": "alice@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "forged@example.com",
+      "recipient": "missing@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "forged@example.com",
+      "recipient": "target@remote.test",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "sender@remote.test",
+      "recipient": "alice@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "sender@remote.test",
+      "recipient": "missing@example.com",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": false,
+      "sender": "sender@remote.test",
+      "recipient": "target@remote.test",
+      "mail": 530,
+      "rcpt": 530
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "",
+      "recipient": "alice@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "",
+      "recipient": "missing@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "",
+      "recipient": "target@remote.test",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "alice@example.com",
+      "recipient": "alice@example.com",
+      "mail": 250,
+      "rcpt": 250
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "alice@example.com",
+      "recipient": "missing@example.com",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "alice@example.com",
+      "recipient": "target@remote.test",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "forged@example.com",
+      "recipient": "alice@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "forged@example.com",
+      "recipient": "missing@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "forged@example.com",
+      "recipient": "target@remote.test",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "sender@remote.test",
+      "recipient": "alice@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "sender@remote.test",
+      "recipient": "missing@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submission",
+      "authenticated": true,
+      "sender": "sender@remote.test",
+      "recipient": "target@remote.test",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "",
+      "recipient": "alice@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "",
+      "recipient": "missing@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "",
+      "recipient": "target@remote.test",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "alice@example.com",
+      "recipient": "alice@example.com",
+      "mail": 250,
+      "rcpt": 250
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "alice@example.com",
+      "recipient": "missing@example.com",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "alice@example.com",
+      "recipient": "target@remote.test",
+      "mail": 250,
+      "rcpt": 550
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "forged@example.com",
+      "recipient": "alice@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "forged@example.com",
+      "recipient": "missing@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "forged@example.com",
+      "recipient": "target@remote.test",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "sender@remote.test",
+      "recipient": "alice@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "sender@remote.test",
+      "recipient": "missing@example.com",
+      "mail": 553,
+      "rcpt": 503
+    },
+    {
+      "role": "submissions",
+      "authenticated": true,
+      "sender": "sender@remote.test",
+      "recipient": "target@remote.test",
+      "mail": 553,
+      "rcpt": 503
+    }
+  ],
+  "accepted_messages": 2,
+  "integrity": {
+    "corrupt_blobs": 0,
+    "delivery_mismatches": 0,
+    "directory_sync_supported": false,
+    "healthy": true,
+    "missing_blobs": 0,
+    "orphan_blobs": 0,
+    "queue_mismatches": 0,
+    "quota_mismatches": 0,
+    "referenced_blobs": 2,
+    "staging_files": 0,
+    "uid_mismatches": 0,
+    "unexpected_files": 0
+  },
+  "revision": "899603994531269932579b01f61f7173f301bf26",
+  "working_tree_dirty": false,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "production_ready": false
+}

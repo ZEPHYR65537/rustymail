@@ -1,0 +1,288 @@
+{
+  "checks": [
+    "R01: real TCP; per-recipient and final DATA classifications; lost results; strict bounded replies and deadlines",
+    "R02: implicit TLS/STARTTLS; post-upgrade capabilities; verified CA/hostname/expiry; encrypted AUTH including challenge and no plaintext fallback",
+    "R03: authenticated mixed submission; atomic local/remote responsibility; one blob; Bcc privacy; verified Return-Path projection",
+    "R04: remote case preservation; durable delivered/deferred/failed/uncertain; restart does not resend; explicit retry only sends the selected recipient",
+    "R05: kill real relay after peer receives DATA; supervised restart (remove known stale Unix admin socket after reaping child) preserves uncertain without resending"
+  ],
+  "attempts": [
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "ok",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      },
+      "seconds": 0.031
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "fragmented_reply",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      },
+      "seconds": 0.016
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "rcpt4",
+      "body_marked": false,
+      "result": {
+        "Temporary": 450
+      },
+      "seconds": 0.031
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "rcpt5",
+      "body_marked": false,
+      "result": {
+        "Permanent": 550
+      },
+      "seconds": 0.031
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "data4",
+      "body_marked": true,
+      "result": {
+        "Temporary": 450
+      },
+      "seconds": 0.016
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "data5",
+      "body_marked": true,
+      "result": {
+        "Permanent": 550
+      },
+      "seconds": 0.031
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "pre_body_disconnect",
+      "body_marked": false,
+      "result": "ConnectionLost",
+      "seconds": 0.031
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "lost_final",
+      "body_marked": true,
+      "result": "ConnectionLost",
+      "seconds": 0.016
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "final_timeout",
+      "body_marked": true,
+      "result": "ConnectionLost",
+      "seconds": 1.016
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "mixed_reply",
+      "body_marked": false,
+      "result": "ConnectionLost",
+      "seconds": 0.015
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "long_reply",
+      "body_marked": false,
+      "result": "ConnectionLost",
+      "seconds": 0.032
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "many_reply",
+      "body_marked": false,
+      "result": "ConnectionLost",
+      "seconds": 0.031
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "banner_timeout",
+      "body_marked": false,
+      "result": "ConnectionLost",
+      "seconds": 1.015
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "no_8bit",
+      "body_marked": false,
+      "result": "Hold",
+      "seconds": 0.016
+    },
+    {
+      "mode": "plain",
+      "certificate": "server",
+      "scenario": "size",
+      "body_marked": false,
+      "result": "Hold",
+      "seconds": 0.031
+    },
+    {
+      "mode": "implicit",
+      "certificate": "server",
+      "scenario": "ok",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      },
+      "seconds": 2.047
+    },
+    {
+      "mode": "starttls",
+      "certificate": "server",
+      "scenario": "ok",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      },
+      "seconds": 2.031
+    },
+    {
+      "mode": "implicit",
+      "certificate": "wrong-host",
+      "scenario": "ok",
+      "body_marked": false,
+      "result": "Deferred",
+      "seconds": 2.031
+    },
+    {
+      "mode": "implicit",
+      "certificate": "expired",
+      "scenario": "ok",
+      "body_marked": false,
+      "result": "Deferred",
+      "seconds": 2.031
+    },
+    {
+      "mode": "starttls",
+      "certificate": "server",
+      "scenario": "no_starttls",
+      "body_marked": false,
+      "result": "Deferred",
+      "seconds": 2.047
+    },
+    {
+      "mode": "starttls",
+      "certificate": "server",
+      "scenario": "cap_reset",
+      "body_marked": false,
+      "result": "Hold",
+      "seconds": 2.047
+    },
+    {
+      "mode": "implicit",
+      "certificate": "server",
+      "scenario": "auth_fail",
+      "body_marked": false,
+      "result": "Deferred",
+      "seconds": 2.031
+    },
+    {
+      "mode": "starttls",
+      "certificate": "server",
+      "scenario": "auth_challenge",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      },
+      "seconds": 2.032
+    },
+    {
+      "mode": "implicit",
+      "certificate": "untrusted",
+      "scenario": "ok",
+      "body_marked": false,
+      "result": "Deferred",
+      "seconds": 2.062
+    }
+  ],
+  "queue_initial": [
+    [
+      "Case@remote.test",
+      "delivered",
+      1
+    ],
+    [
+      "case@remote.test",
+      "delivered",
+      1
+    ],
+    [
+      "defer@remote.test",
+      "deferred",
+      1
+    ],
+    [
+      "fail@remote.test",
+      "failed",
+      1
+    ],
+    [
+      "lost@remote.test",
+      "uncertain",
+      1
+    ]
+  ],
+  "queue_after_retry": [
+    [
+      "Case@remote.test",
+      "delivered",
+      1
+    ],
+    [
+      "case@remote.test",
+      "delivered",
+      1
+    ],
+    [
+      "defer@remote.test",
+      "delivered",
+      2
+    ],
+    [
+      "fail@remote.test",
+      "failed",
+      1
+    ],
+    [
+      "lost@remote.test",
+      "uncertain",
+      1
+    ]
+  ],
+  "crash_recovery": [
+    [
+      "crash@remote.test",
+      "uncertain",
+      1
+    ]
+  ],
+  "stale_admin_socket_removed": false,
+  "external_messages": 0,
+  "revision": "899603994531269932579b01f61f7173f301bf26",
+  "working_tree_dirty": false,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "production_ready": false
+}
