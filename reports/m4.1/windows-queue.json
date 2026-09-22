@@ -1,0 +1,166 @@
+{
+  "checks": [
+    "Q01: atomic shared-blob import; external case; strict idempotence; bounded keyset list",
+    "Q02: explicit hold/retry consent; null sender; integrity; GC retains referenced queue body",
+    "Q03: eight actual process kills around enqueue/claim/body/result commits; durable recovery states"
+  ],
+  "process_cuts": [
+    {
+      "action": "enqueue",
+      "boundary": "before",
+      "persisted_state": null,
+      "persisted_phase": null,
+      "recovered_state": null,
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 0,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "action": "enqueue",
+      "boundary": "after",
+      "persisted_state": "pending",
+      "persisted_phase": null,
+      "recovered_state": "pending",
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "action": "claim",
+      "boundary": "before",
+      "persisted_state": "pending",
+      "persisted_phase": null,
+      "recovered_state": "pending",
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "action": "claim",
+      "boundary": "after",
+      "persisted_state": "leased",
+      "persisted_phase": "ready",
+      "recovered_state": "deferred",
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "action": "body",
+      "boundary": "before",
+      "persisted_state": "leased",
+      "persisted_phase": "ready",
+      "recovered_state": "deferred",
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "action": "body",
+      "boundary": "after",
+      "persisted_state": "leased",
+      "persisted_phase": "body",
+      "recovered_state": "uncertain",
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "action": "finish",
+      "boundary": "before",
+      "persisted_state": "leased",
+      "persisted_phase": "body",
+      "recovered_state": "uncertain",
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "action": "finish",
+      "boundary": "after",
+      "persisted_state": "delivered",
+      "persisted_phase": null,
+      "recovered_state": "delivered",
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 1,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    }
+  ],
+  "external_messages": 0,
+  "revision": "6c1d0bdb18c8f17876dfdfde413c1fdcbbc5534c",
+  "working_tree_dirty": false,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "production_ready": false
+}

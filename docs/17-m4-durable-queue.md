@@ -12,6 +12,23 @@
 
 更难的情况是：对方保存了邮件，250 在返回途中丢失；或者本端读到了 250，却在记录成功前崩溃。本端只能观察到“没有保存成功结果”，不能推导“对方没有收到”。SMTP 没有通用的跨服务器事务提交协议，也没有要求对方按 Message-ID 去重。因此本项目不会承诺恰好一次；优先保存责任，并显式暴露重复窗口。规范对超时与重复的讨论见 [RFC 5321 §6.1](https://www.rfc-editor.org/rfc/rfc5321.html#section-6.1)。
 
+单个 TCP 丢包通常由重传处理；这里的不确定性出现在连接失效、超时或本端崩溃，导致应用不能确认最终结果时。下面是未来 M4.2 网络执行器必须遵守的顺序；M4.1 只验证其中的数据库转换：
+
+```mermaid
+sequenceDiagram
+    participant Q as 本地队列数据库
+    participant C as 出站执行器
+    participant R as 上游服务器
+    C->>Q: mark_body
+    Q-->>C: body 阶段已持久化
+    C->>R: 正文与 DATA 结束点
+    R->>R: 耐久接受消息
+    R--xC: 连接中断，250 未被本端读到
+    C->>C: 终止实际网络工作
+    C->>Q: finish(ConnectionLost)
+    Q-->>C: uncertain，保留责任
+```
+
 ## 2. 数据库已经保护了什么，还缺什么
 
 schema 1 已有 `delivery` 的状态、尝试次数、到期时间、token 和 generation；当时并没有队列执行路径。新[迁移 0003](../crates/store/migrations/0003.sql)补充两个表及三个部分索引：

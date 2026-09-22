@@ -1,0 +1,20 @@
+{
+  "revision": "6c1d0bdb18c8f17876dfdfde413c1fdcbbc5534c",
+  "working_tree_dirty": false,
+  "platform": "posix",
+  "openssl": "OpenSSL 3.0.13 30 Jan 2024",
+  "checks": [
+    "receiver accepts anonymous local mail with/without TLS; upgrade clears greeting and envelope; no AUTH or relay",
+    "submission requires STARTTLS, fresh EHLO and AUTH; unauthorized sender/relay/repeated TLS rejected",
+    "implicit TLS submission shares account, authorization and store with STARTTLS submission",
+    "pipelined plaintext cannot cross STARTTLS as SMTP commands (discard or close)",
+    "verified STARTTLS rejects unknown CA; handshake failure never falls back to plaintext SMTP",
+    "global handshake budget applies across ports; stalled handshakes expire and return their permit",
+    "connection admission is shared by all three ports",
+    "online revocation terminates an upgraded submission during DATA",
+    "STARTTLS does not restart the original five-second unauthenticated lifetime",
+    "restart preserves exactly four accepted messages with valid final trace and byte-exact retained content; all negatives leave no accepted message",
+    "diagnostic logs contain no application password, AUTH frame or test message body"
+  ],
+  "production_ready": false
+}
