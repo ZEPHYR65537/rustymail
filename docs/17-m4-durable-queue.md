@@ -167,7 +167,7 @@ GC 仍只删除无引用文件；队列中 pending、uncertain 甚至已完成�
 | [queue.rs](../crates/store/src/queue.rs) | enqueue 顺序、租约 guard、索引扫描、状态迁移、流式校验 |
 | [queue_tests.rs](../crates/store/src/queue_tests.rs) | 逐人结果、提交故障、过期活任务、时钟、跨域进展、损坏及迁移 |
 | [runtime.rs](../crates/store/src/runtime.rs) | 可替换双时钟、正常构建中禁用的故障钩子 |
-| [rustymailctl.rs](../crates/server/src/bin/rustymailctl.rs) | 可信离线管理入口与有界导入 |
+| [control.rs](../crates/server/src/cli/control.rs) | 可信离线管理入口与有界导入；0.9.0 从 rustymailctl.rs 移入共享入口 |
 | [m41_probe.rs](../crates/store/examples/m41_probe.rs) / [m41_smoke.py](../scripts/m41_smoke.py) | 同步故障标记、真实进程终止、独立 SQLite 观察与恢复 |
 
 ```sh

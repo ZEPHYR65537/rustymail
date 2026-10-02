@@ -42,7 +42,7 @@ python scripts/smoke.py --bin-dir target/release
 | [protocol](../crates/protocol/src/lib.rs) | 字节如何成为一条命令？命令是否合法取决于什么？ |
 | [store](../crates/store/src/lib.rs)、[blob](../crates/store/src/blob.rs) | 文件和数据库怎样一起承担接受责任？ |
 | [server](../crates/server/src/lib.rs)、[worker](../crates/server/src/worker.rs) | 异步网络如何调用同步数据库，并限制资源？ |
-| [rustymaild](../crates/server/src/bin/rustymaild.rs)、[rustymailctl](../crates/server/src/bin/rustymailctl.rs) | 命令行怎样声明当前能力、拒绝危险模式？ |
+| [守护进程入口](../crates/server/src/cli/daemon.rs)、[管理入口](../crates/server/src/cli/control.rs) | 命令行怎样声明当前能力、拒绝危险模式？0.9.0 将原 rustymaild/rustymailctl 逻辑移至此处，旧二进制保留薄包装。 |
 | [真实 TCP 测试](../crates/server/tests/smtp.rs)、[存储故障测试](../crates/store/src/tests.rs) | 如何证明某个故障不会变成错误的成功响应？ |
 
 `core` 不依赖服务器；`protocol` 不访问磁盘；`store` 不懂 SMTP 响应；`server` 连接这几层。测试因此可以分别定位语法、会话、存储和网络错误。

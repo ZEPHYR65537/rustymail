@@ -2,6 +2,8 @@
 
 本章对应 0.8.0、schema 3。现在可以通过认证提交邮件，原子保存本地与远端责任，再由后台执行器通过固定上游的 TLS SMTP 连接发送。入站监听仍限制在环回；`serve` 仍拒绝生产启动。没有 IMAP、DSN、域认证、反垃圾或直接 MX 投递。实际证据见 [M4.2 报告](../reports/m4.2/validation.md)。
 
+0.9.0 将单次 SMTP/TLS 引擎抽到 client crate，让 CLI 与队列共用；server/relay.rs 保留队列调度及类型适配。本章源码链接已指向当前位置，新增角色和配置见[统一 CLI 教程](21-unified-cli.md)，不改变下面 0.8.0 报告的验收范围。
+
 建议先运行第 7 节的独立实验，再阅读[队列基础](17-m4-durable-queue.md)与本章源码。学完应能区分三件事：开发时怎样尽早得到反馈，运行时哪些责任不能省略，以及怎样把“不知道是否成功”正确保留下来。
 
 ## 1. 先跑通，再让每一步承担明确责任
@@ -57,7 +59,7 @@ STARTTLS 后必须丢弃明文预读缓冲及之前的能力信息，再次 EHLO
 本地最终交付需要生成 Return-Path；继续中继时不能把这个本地交付字段当成原始追踪信息。M4.2 为认证提交采用以下明确契约：
 
 1. 生成并存储首行 `Return-Path: <信封发件人>\r\n`，紧接已有 Received 字段，再写过滤后的输入。
-2. 删除提交内容中的 Return-Path、Bcc 及其折叠续行。信封 RCPT 保持独立；Bcc 消失不会移除隐送责任。
+2. 删除提交内容中的 Return-Path、Bcc 及其折叠续行；0.9.0 另加入 Resent-Bcc。信封 RCPT 保持独立；Bcc 消失不会移除隐送责任。
 3. 本地邮箱引用完整 blob；中继读取同一个 blob，验证首行与预期字节完全相同后，仅省略该行。
 4. 即使省略首行，也必须读取、散列校验**整个存储文件到 EOF**。出站 SIZE 是完整大小减去这一行的字节数。
 
@@ -157,9 +159,10 @@ target/debug/rustymaild --config deploy/rustymail.relay-lab.toml serve-lab-relay
 
 | 位置 | 阅读问题 |
 | --- | --- |
-| [relay.rs](../crates/server/src/relay.rs) | 各阶段谁拥有 socket？哪些错误可以重试？最终点为何在 EOF 后？ |
+| [client/smtp.rs](../crates/client/src/smtp.rs) | 各阶段谁拥有 socket？最终点为何在 EOF 后？ |
+| [server/relay.rs](../crates/server/src/relay.rs) | 网络结果怎样转换为队列状态？哪些错误可以重试？实际读取如何持有租约？ |
 | [relay_tests.rs](../crates/server/src/relay_tests.rs) | 如何证明取消网络并未过早释放阻塞读取的锁？ |
-| [server/lib.rs](../crates/server/src/lib.rs) / [trace.rs](../crates/server/src/trace.rs) | 哪些入口允许远端 RCPT？Bcc 的折叠行在哪里删除？ |
+| [server/lib.rs](../crates/server/src/lib.rs) / [protocol/headers.rs](../crates/protocol/src/headers.rs) | 哪些入口允许远端 RCPT？Bcc 的折叠行在哪里删除？ |
 | [store/lib.rs](../crates/store/src/lib.rs) / [m42_tests.rs](../crates/store/src/m42_tests.rs) | 如何在提交前后故障中验证混合责任全部有或全部无？ |
 | [m42_smoke.py](../scripts/m42_smoke.py) | 独立对端如何控制最终回复，观察重启后的责任？ |
 | [relay_stream.py](../scripts/relay_stream.py) | 内存数字包含哪些进程？采样错过峰值时结论如何限定？ |

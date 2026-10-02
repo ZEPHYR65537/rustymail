@@ -1,0 +1,117 @@
+{
+  "checks": [
+    {
+      "case": "implicit-file",
+      "exit": 0,
+      "statuses": [
+        "accepted",
+        "accepted"
+      ]
+    },
+    {
+      "case": "starttls-stdin",
+      "exit": 0,
+      "statuses": [
+        "accepted",
+        "accepted"
+      ]
+    },
+    {
+      "case": "rcpt4",
+      "exit": 1,
+      "status": "temporary_failure"
+    },
+    {
+      "case": "rcpt5",
+      "exit": 1,
+      "status": "permanent_failure"
+    },
+    {
+      "case": "data4",
+      "exit": 1,
+      "status": "temporary_failure"
+    },
+    {
+      "case": "data5",
+      "exit": 1,
+      "status": "permanent_failure"
+    },
+    {
+      "case": "lost_final",
+      "exit": 3,
+      "status": "uncertain"
+    },
+    {
+      "case": "final_timeout",
+      "exit": 3,
+      "status": "uncertain"
+    },
+    {
+      "case": "pre_body_disconnect",
+      "exit": 1,
+      "status": "not_submitted"
+    },
+    {
+      "case": "auth_fail",
+      "exit": 1,
+      "status": "not_submitted"
+    },
+    {
+      "case": "no_starttls",
+      "exit": 1,
+      "status": "not_submitted"
+    },
+    {
+      "case": "size",
+      "exit": 1,
+      "status": "not_submitted"
+    },
+    {
+      "case": "no_8bit",
+      "exit": 1,
+      "status": "not_submitted"
+    },
+    {
+      "case": "mixed",
+      "exit": 3,
+      "statuses": [
+        "accepted",
+        "permanent_failure",
+        "temporary_failure",
+        "uncertain"
+      ]
+    },
+    {
+      "case": "wrong-host",
+      "exit": 1,
+      "credentials_sent": false
+    },
+    {
+      "case": "expired",
+      "exit": 1,
+      "credentials_sent": false
+    },
+    {
+      "case": "untrusted",
+      "exit": 1,
+      "credentials_sent": false
+    },
+    {
+      "case": "preflight-and-config",
+      "network_attempts": 0
+    },
+    {
+      "case": "unified-serve-admin-check",
+      "accepted_local_messages": 1
+    },
+    {
+      "case": "client-to-rustymail-tls",
+      "status": "accepted"
+    }
+  ],
+  "external_messages": 0,
+  "revision": "229d2076615608147c08f31eb5cfe87307d64c01",
+  "working_tree_dirty": false,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "production_ready": false
+}

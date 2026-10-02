@@ -51,3 +51,15 @@ python scripts/check_docs.py
 ```
 
 [CI](../../.github/workflows/ci.yml)增加两平台 CLI 实验和原始结果产物；Linux 另测 DATA 后 SIGINT：当前项 uncertain、后续项 not_attempted、退出 3、无第二次连接。独立[依赖审计工作流](../../.github/workflows/security.yml)继续检查最新公告。本地记录不替代 Linux 作业、整机故障、真实邮件服务互通或生产验收。
+
+## 远端干净检出验证
+
+提交 `229d2076615608147c08f31eb5cfe87307d64c01` 的 [CI](https://github.com/ZEPHYR65537/rustymail/actions/runs/37044729859) 已通过 Linux、Windows 两个平台协议作业：分别 88、84 项 Rust 测试；全部旧 SMTP／队列实验通过，新增 CLI 实验分别 21、20 组。Linux 的新增第 21 组是正文后 SIGINT，不确定结果和后续跳过均符合约定。两份 CLI 结果的 working_tree_dirty 均为 false，见 [Linux 原始结果](ci-linux-cli.json)、[Windows 原始结果](ci-windows-cli.json)。
+
+[安全工作流](https://github.com/ZEPHYR65537/rustymail/actions/runs/37044729782)也通过：当前官方公告库提交 `117edb3bed98e9be112f277b7615eea3252e7c43`，含 1,280 条公告，扫描 158 个包，0 漏洞、0 警告。该库比本地扫描更新，分别保存[扫描结果](ci-rustsec-audit.json)和[版本／锁文件出处](ci-security-provenance.txt)。
+
+[CI 出处记录](ci-provenance.json)保存作业链接、测试数量、日志摘要、产物压缩包 SHA-256 与归档文件摘要。下载时核对 GitHub 提供的产物摘要，归档只规范化换行，不改 JSON 值。
+
+同一 CI 的 Linux 存储实验作业也已成功，整条 CI 完成。原始记录包括[四组容量／恢复压力](ci-linux-pressure.json)、[QEMU 中断与实际磁盘满](ci-linux-storage.json)、[收信基准](ci-linux-benchmark.json)、[分帧基准](ci-linux-framing.json)和[中继流式采样](ci-linux-relay-stream.json)。这些是原实验的回归，不能替代物理掉电或生产持续负载验收。
+
+抽取后的共享 SMTP 引擎在独立 Linux release 探针里发送约 1 MiB／25 MiB 时，观察到的 HWM 分别为 5,088／5,092 KiB，通过既有流式回归门槛。采样间隔目标为 5 ms，峰值可能漏采；测量对象是单次中继探针，不含 CLI 预检／快照、Python 对端、数据库、队列或 Argon2，所以不作为统一 CLI 的 RSS 声明。
