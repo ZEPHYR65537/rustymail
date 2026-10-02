@@ -1,9 +1,9 @@
 [workspace]
-members = ["crates/core", "crates/protocol", "crates/store", "crates/server"]
+members = ["crates/core", "crates/protocol", "crates/store", "crates/client", "crates/server"]
 resolver = "3"
 
 [workspace.package]
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.94"
 repository = "https://github.com/ZEPHYR65537/rustymail"
@@ -13,6 +13,7 @@ publish = false
 rustymail-core = { path = "crates/core" }
 rustymail-protocol = { path = "crates/protocol" }
 rustymail-store = { path = "crates/store" }
+rustymail-client = { path = "crates/client" }
 clap = { version = "4.6", features = ["derive"] }
 fs2 = "0.4.3"
 rusqlite = { version = "0.40", features = ["bundled"] }

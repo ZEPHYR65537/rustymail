@@ -26,6 +26,8 @@ flowchart LR
 
 主服务只支持单实例写入同一数据目录。启动持有目录锁；第二个实例拒绝启动。CLI 不绕过主服务并发修改数据库，离线修复必须先停止服务。
 
+0.9.0 新增统一入口：`rustymail serve`、`rustymail admin` 分别复用原守护进程和管理代码，旧程序名仍保留；`rustymail send` 使用独立配置和 SMTP/TLS 客户端库，不打开服务器数据目录。当前实际 workspace 为 core、protocol、store、client、server；下方树是完整目标的模块蓝图。共享传输只负责一次网络尝试，队列持久责任由 server/store 保存，CLI 快照只服务于本次命令。实现和实验见[统一 CLI 教程](21-unified-cli.md)。
+
 ## 2. 建议的 Cargo workspace
 
 ```text

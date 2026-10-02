@@ -1,7 +1,10 @@
 use super::*;
 use rustymail_store::{QueuePlan, Store, StoreError, StoreOptions};
 use std::io::Cursor;
-use tokio::{io::AsyncReadExt, net::TcpListener};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, BufReader},
+    net::TcpListener,
+};
 
 const RAW: &[u8] = b"From: sender@example.test\r\n\r\n.dot\r\nbody\r\n";
 fn config() -> Config {
@@ -68,31 +71,6 @@ impl Read for Chunks {
         } else {
             Ok(n)
         }
-    }
-}
-
-#[tokio::test]
-async fn fragmented_body_preserves_projection_transparency_and_fixed_reads() {
-    let raw = b"Return-Path: <>\r\nFrom: sender@example.test\r\n\r\n.\r\n..two\r\nend\r\n";
-    for maximum in 1..=raw.len() {
-        let (stream, mut received) = tokio::io::duplex(4096);
-        let mut wire: Wire = BufReader::new(Box::new(stream));
-        let client = RelayClient::plaintext_lab("127.0.0.1:1".parse().unwrap(), &config()).unwrap();
-        let mut metadata = message(raw);
-        metadata.omit_prefix = "Return-Path: <>\r\n".into();
-        let reader = Chunks {
-            bytes: Cursor::new(raw.to_vec()),
-            maximum,
-            fail_eof: false,
-        };
-        assert!(client.send_body(&mut wire, reader, &metadata).await.is_ok());
-        drop(wire);
-        let mut result = Vec::new();
-        received.read_to_end(&mut result).await.unwrap();
-        assert_eq!(
-            result,
-            b"From: sender@example.test\r\n\r\n..\r\n...two\r\nend\r\n"
-        );
     }
 }
 

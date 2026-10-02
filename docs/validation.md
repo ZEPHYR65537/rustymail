@@ -14,6 +14,8 @@
 
 0.8.0 的实际 TLS 中继与混合接受见 [M4.2 报告](../reports/m4.2/validation.md)，不改变下面历史检查的计数。
 
+0.9.0 的统一入口与独立 SMTP 提交见 [CLI 报告](../reports/cli/validation.md)。
+
 ## 检查项
 
 | 检查 | 当前结果 |

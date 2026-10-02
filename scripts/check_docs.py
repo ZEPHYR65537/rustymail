@@ -33,6 +33,11 @@ for name in ["rustymail.example.toml", "rustymail.lab.toml", "rustymail.tls-lab.
     assert config["store"]["synchronous"] == "full"
     assert all(v.startswith("127.0.0.1:") for v in config["listeners"].values())
 
+client = tomllib.loads((root/'deploy/rustymail.client.example.toml').read_text(encoding='utf-8'))
+assert client['schema_version'] == 1 and client['smtp']['security'] == 'starttls'
+assert client['smtp']['ca_file'] and client['smtp']['password_file']
+assert 'password' not in client['smtp'] and 'data_dir' not in client
+
 with tempfile.TemporaryDirectory(prefix="rustymail-docs-") as temporary:
     connection = sqlite3.connect(Path(temporary) / "schema.sqlite")
     try:

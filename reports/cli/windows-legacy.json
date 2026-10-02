@@ -1,0 +1,24 @@
+{
+  "result": "passed",
+  "client": "Python smtplib",
+  "checks": [
+    "strict CLI configuration",
+    "production entry refused",
+    "receive-only account",
+    "SMTP capability truthfulness",
+    "relay denied",
+    "SMTP final-250 acceptance",
+    "forced process termination",
+    "byte-exact recovery/export",
+    "no export overwrite",
+    "exclusive admin lock",
+    "server restart",
+    "operation lookup",
+    "legacy schema adoption",
+    "GC preview and audited apply",
+    "verified export rejects corruption/truncation/growth and cleans output",
+    "verified missing-blob recovery",
+    "no recovery overwrite",
+    "offline checkpoint"
+  ]
+}

@@ -6,7 +6,11 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-test-support = ["rustymail-store/test-support"]
+test-support = ["rustymail-store/test-support", "rustymail-client/test-support"]
+
+[[bin]]
+name = "rustymail"
+path = "src/bin/rustymail.rs"
 
 [[bin]]
 name = "rustymaild"
@@ -20,6 +24,7 @@ path = "src/bin/rustymailctl.rs"
 rustymail-core.workspace = true
 rustymail-protocol.workspace = true
 rustymail-store.workspace = true
+rustymail-client.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -37,6 +42,7 @@ time.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
+rustymail-client = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 rusqlite.workspace = true
 rcgen.workspace = true

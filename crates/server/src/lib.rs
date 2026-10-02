@@ -2,6 +2,7 @@
 pub mod admin;
 pub mod auth;
 mod auth_dialog;
+pub mod cli;
 mod logging;
 pub mod relay;
 mod revocation;
@@ -983,7 +984,9 @@ async fn receive_message<R: AsyncRead + Unpin>(
             if data == b"\r\n" {
                 in_headers = false;
             } else {
-                let retain = filter.retain(data)?;
+                let retain = filter
+                    .retain(data)
+                    .map_err(|_| ServerError::InvalidHeaders)?;
                 if submission {
                     identities.line(data)?;
                 }

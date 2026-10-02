@@ -1,4 +1,6 @@
 //! Bounded SMTP framing and pure session transitions.
+mod headers;
+pub use headers::{HeaderError, HeaderFilter};
 use rustymail_core::Address;
 use thiserror::Error;
 

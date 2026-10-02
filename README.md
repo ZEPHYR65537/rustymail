@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.8.0 / M4.2 L0 实验实现：已有固定上游 TLS 发送、持久队列与本地/远端原子混合提交。它还不是生产邮件服务器。** IMAP、DSN、域认证和反垃圾尚未实现；入站仍限环回，生产启动入口明确拒绝。按[教程总目录](docs/06-learning-guide.md)学习，或运行[真实 SMTP 中继实验](docs/18-m4-smtp-relay.md)。实际验收状态以 [M4.2 报告](reports/m4.2/validation.md)为准；下一步为 M4.3 通知与失败生命周期。
+**当前是 0.9.0 / M4.2 L0 + 统一 CLI：同一个 `rustymail` 可作为 SMTP 提交客户端、实验服务器和管理工具。它还不是生产邮件服务器。** 已有固定上游 TLS 发送、持久队列与本地/远端原子混合提交；IMAP、DSN、域认证和反垃圾尚未实现，入站仍限环回。按[教程总目录](docs/06-learning-guide.md)学习，或运行[统一 CLI 实验](docs/21-unified-cli.md)。服务端验收见 [M4.2 报告](reports/m4.2/validation.md)，本轮见 [CLI 报告](reports/cli/validation.md)；下一步仍为 M4.3 通知与失败生命周期。
 
 0.3.1 修复磁盘任务取消、撤销通知丢失和管理响应超限，复用 DATA 行缓冲并收紧组合资源预算。原理与保留限制见[取消与资源边界教程](docs/13-cancellation-and-bounds.md)，回归证据见[修复验证报告](reports/0.3.1/validation.md)。
 
@@ -36,6 +36,17 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 
 数据保存在 `data/lab`；离线管理命令与服务共用独占锁，不能同时运行。默认需保留至少 2 GiB 或磁盘 10% 的可用空间，再加活动接收的预留空间。`account add` 只执行一次；已存在时拒绝覆盖。完整导出、测试与原理见[第一轮实现教程](docs/10-first-implementation.md)。
 
+## 同一个程序作为客户端或服务端
+
+```sh
+rustymail send --config client.toml --to bob@example.com --file message.eml
+rustymail check --config deploy/rustymail.lab.toml
+rustymail admin --config deploy/rustymail.lab.toml account add alice@example.com
+rustymail serve --config deploy/rustymail.lab.toml --mode lab
+```
+
+构建后的程序在 `target/debug/`；以上假设它已在 PATH 中。发信使用独立的[客户端配置](deploy/rustymail.client.example.toml)，需填写 SMTP 服务、可信 CA、账号和应用密码文件；只初始化客户端，不打开服务端数据库。支持已有 CRLF 邮件文件和 stdin、STARTTLS/隐式 TLS、逐收件人 JSON 结果，不自动重试。输入、退出码及完整可复现实验见[CLI 教程](docs/21-unified-cli.md)。旧 `rustymaild` 与 `rustymailctl` 仍兼容，`serve` 默认的生产模式仍拒绝启动。
+
 ## 当前能力
 
 | 已运行的行为 | 边界 |
@@ -51,6 +62,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | 账号创建、分页列信、原文导出、完整性检查、离线 GC | GC 默认预览；仅回收无引用文件，不过期删除邮箱或投递历史 |
 | schema 1/2→3 原子迁移、operation 查询、缺失 blob 恢复 | 迁移校验结构与摘要；恢复不覆盖现有文件，不改变 UID/配额 |
 | 持久入队、逐收件人结果、租约、退避、hold/uncertain | 后台 TLS 发送与原子混合接受；有界扫描/流式校验；无 DSN、连接池或直接 MX |
+| 统一 CLI、独立 SMTP 提交、文件/stdin 预检与私有快照 | 输入最多 25 MiB；逐人串行；AUTH PLAIN；无 MIME 编辑、OAuth、收信或自动重试 |
 
 配置检查会验证未来配置字段，但不表示对应服务已实现。`serve-lab` 只绑定 `listeners.smtp`；`serve-lab-tls` 只绑定 `listeners.submissions`；新 `serve-lab-smtp` 同时绑定 smtp/submissions/submission，`serve-lab-relay` 在三入口之外启用固定上游发送。所有 TLS 启动模式在 Linux 启用私有管理 socket。均无指标服务和 IMAP。Emacs 配置维持 TLS 要求；完整 Gnus 收发互通等待 M5。
 
@@ -77,6 +89,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 19. [M4.2：真实 SMTP 与 TLS 中继](docs/18-m4-smtp-relay.md)：先跑通一封邮件，再加入故障、TLS、流式验证和原子混合责任。
 20. [审计修复：校验导出与依赖审计](docs/19-verified-export-and-dependency-audit.md)：成功 EOF、失败产物和随时间变化的安全证据。
 21. [M4.3 具体实施计划](docs/20-m43-delivery-lifecycle-plan.md)：通知事务、DSN、到期／未知结果及 PIPELINING 的范围与验收。
+22. [统一 CLI 与 SMTP 提交客户端](docs/21-unified-cli.md)：角色入口、独立配置、有限快照、共享传输、逐人结果和未知结果处理。
 
 ## 配套文件
 
@@ -86,6 +99,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [emacs/authinfo.example](emacs/authinfo.example) | 凭据格式示例，只有占位值 |
 | [deploy/rustymail.lab.toml](deploy/rustymail.lab.toml) | 可运行实验配置，显式禁用未实现的扫描和外发 |
 | [deploy/rustymail.tls-lab.toml](deploy/rustymail.tls-lab.toml) | TLS/身份与三入口实验；启动命令决定活跃端口，见 M2/M3.1 教程 |
+| [deploy/rustymail.client.example.toml](deploy/rustymail.client.example.toml) | 独立发信配置；相对路径按配置文件目录解析；不含密码明文 |
 | [deploy/rustymail.example.toml](deploy/rustymail.example.toml) | 完整配置契约；`check` 可验证；扫描必需，因此不能用来启动实验接收器 |
 | [deploy/rustymail.service.in](deploy/rustymail.service.in) | 未来 Linux 服务模板；当前不可直接启动 |
 | [存储迁移](crates/store/migrations/0003.sql) | 当前 `user_version=3`，新增队列表示、尝试阶段与索引；保留所有已接受邮件 |
@@ -97,6 +111,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 | [M3.3 验证报告](reports/m3.3/validation.md) | 0.6.0 的输入契约、角色矩阵、容量拒绝和恢复证据 |
 | [M4.1 验证报告](reports/m4.1/validation.md) | 0.7.0 的队列、租约、故障恢复及原有能力回归证据 |
 | [M4.2 验证报告](reports/m4.2/validation.md) | 0.8.0 的真实 TLS 中继、混合提交、网络取消和流式内存证据 |
+| [CLI 验证报告](reports/cli/validation.md) | 0.9.0 的统一入口、客户端提交、证书拒绝、结果分类与原功能回归 |
 | [验证记录](docs/validation.md) | 设计阶段的历史静态检查，以及各阶段验证报告入口 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。

@@ -1,0 +1,16 @@
+# Client-only configuration. Paths are relative to this file.
+schema_version = 1
+sender = "alice@example.com"
+
+[smtp]
+host = "mail.example.com"
+port = 587
+security = "starttls" # or "implicit" (normally port 465)
+ehlo = "client.example.com"
+ca_file = "/etc/ssl/certs/ca-certificates.crt"
+username = "alice@example.com"
+password_file = "secrets/alice.secret" # Unix mode 0600; never a CLI password
+
+[limits]
+message_bytes = 26214400
+header_bytes = 65536
