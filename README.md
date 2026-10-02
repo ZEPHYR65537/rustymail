@@ -75,6 +75,8 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 17. [M3.3：输入契约与资源恢复](docs/16-m3-input-contract.md)：编码协商、回复分类、状态枚举、48 行权限矩阵和有限压力验收。
 18. [M4.1：持久队列与不确定结果](docs/17-m4-durable-queue.md)：原子入队、逐人责任、租约生命周期、有限扫描、时钟与强杀恢复。
 19. [M4.2：真实 SMTP 与 TLS 中继](docs/18-m4-smtp-relay.md)：先跑通一封邮件，再加入故障、TLS、流式验证和原子混合责任。
+20. [审计修复：校验导出与依赖审计](docs/19-verified-export-and-dependency-audit.md)：成功 EOF、失败产物和随时间变化的安全证据。
+21. [M4.3 具体实施计划](docs/20-m43-delivery-lifecycle-plan.md)：通知事务、DSN、到期／未知结果及 PIPELINING 的范围与验收。
 
 ## 配套文件
 

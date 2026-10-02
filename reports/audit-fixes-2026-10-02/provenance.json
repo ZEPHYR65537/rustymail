@@ -1,0 +1,28 @@
+{
+  "base_revision": "56c2d0cf3d2c0bfa8e733c66985a9409d271bd40",
+  "tested_worktree": true,
+  "source_sha256": {
+    "crates/store/src/verified.rs": "42c797e72ba2ba8ac5dc8656595c8ffbb721598aa57cd89d4b5d05a0945c7ac9",
+    "crates/store/src/lib.rs": "42581a2e9d70363251d298222b8e6bbd8434b613431066540714de747f02e207",
+    "crates/store/src/queue.rs": "d098bfb0e9aca7c460e60982d15ae93b5881032852979a2b5a15d0a77ea7ba24",
+    "crates/store/src/tests.rs": "b109917b23f33b7096a653675c7f91c554d372e4b45649ac6204f71efcaaf33e",
+    "crates/server/src/bin/rustymailctl.rs": "b8a9b96606db43a12f40ac433403aa3e97fdcb8d7f4e0ea2671cf5ddaad8253a",
+    "crates/server/tests/smtp.rs": "e1d43916ad856f3ab5ffe1319796eefb206704cf54cf3598117bd344d9062ee5",
+    "scripts/smoke.py": "a98508eba21d3cadb8a31dbadcdb0e9ff2cca18f2b3a2587f2b217bd0d3c2327",
+    ".github/workflows/security.yml": "89d322b5265fe87654226ab54f5e7a65d809031930dc3f83149a0c7d32770b33",
+    "Cargo.lock": "7bde0416e2024ab2b89694e2e7303f2b38590a16a477ae22de8e9112e3197852"
+  },
+  "hash_normalization": "CRLF to LF",
+  "platform": "Windows",
+  "rust_tests_passed": 80,
+  "rustsec_commit": "6de4455103aced2cba86e3b86e5c090b22827cf1",
+  "cargo_audit_version": "0.22.2",
+  "positive_audit_yanked_check": true,
+  "negative_fixture": {
+    "package": "time",
+    "version": "0.3.46",
+    "yanked_check": false,
+    "exit_code": 1
+  },
+  "production_ready": false
+}

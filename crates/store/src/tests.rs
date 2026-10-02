@@ -244,6 +244,48 @@ async fn persists_complete_acceptance_and_account_scoped_export() {
 }
 
 #[tokio::test]
+async fn export_rejects_same_size_corruption_truncation_and_growth() {
+    let directory = private_test_directory();
+    let mut store = Store::open(directory.path(), options()).unwrap();
+    store.create_account(&address("alice"), 1_000_000).unwrap();
+    let message = prepared(&store, RAW).await;
+    let path = blob_path(&store.root, &message.id).unwrap();
+    let accepted = store.accept(message, plan(KEY, &["alice"])).unwrap();
+    let mut changed = RAW.to_vec();
+    changed[0] ^= 1;
+    for damaged in [
+        changed,
+        RAW[..RAW.len() - 1].to_vec(),
+        [RAW, b"extra"].concat(),
+    ] {
+        fs::write(&path, damaged).unwrap();
+        assert!(matches!(
+            store.export(&address("alice"), &accepted.message_id, &mut Vec::new()),
+            Err(StoreError::Io(error)) if error.kind() == io::ErrorKind::InvalidData
+        ));
+    }
+    fs::write(path, RAW).unwrap();
+    let mut bytes = Vec::new();
+    assert_eq!(
+        store
+            .export(&address("alice"), &accepted.message_id, &mut bytes)
+            .unwrap(),
+        RAW.len() as u64
+    );
+    assert_eq!(bytes, RAW);
+    // Output failures must not be mistaken for verified export success either.
+    assert!(
+        store
+            .export(
+                &address("alice"),
+                &accepted.message_id,
+                &mut &mut [0u8; 1][..]
+            )
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn quota_and_missing_recipient_roll_back_every_recipient() {
     let directory = private_test_directory();
     let mut store = Store::open(directory.path(), options()).unwrap();

@@ -1,5 +1,6 @@
 //! Durable per-recipient relay responsibility. No sockets or automatic sending.
-use crate::blob::{blob_path, reject_symlink, valid_id};
+use crate::blob::{blob_path, valid_id};
+use crate::verified::VerifiedReader;
 use crate::{
     AcceptedMessage, FaultPoint, InstanceLock, PreparedMessage, StorageRuntime, Store, StoreError,
     unsigned_column,
@@ -10,7 +11,6 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::File,
     io::{self, Read},
     sync::{Arc, Weak},
 };
@@ -179,37 +179,12 @@ impl QueueLease {
 }
 
 pub struct QueuedReader {
-    file: File,
+    reader: VerifiedReader,
     _guard: Arc<LeaseGuard>,
-    expected_size: u64,
-    expected_hash: String,
-    read_bytes: u64,
-    hash: Sha256,
-    verified: bool,
 }
 impl Read for QueuedReader {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        if buffer.is_empty() || self.verified {
-            return Ok(0);
-        }
-        let count = self.file.read(buffer)?;
-        self.read_bytes = self
-            .read_bytes
-            .checked_add(count as u64)
-            .ok_or_else(|| io::Error::other("queue byte counter overflow"))?;
-        self.hash.update(&buffer[..count]);
-        if self.read_bytes > self.expected_size
-            || (count == 0
-                && (self.read_bytes != self.expected_size
-                    || format!("{:x}", self.hash.clone().finalize()) != self.expected_hash))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "queued blob integrity mismatch",
-            ));
-        }
-        self.verified = count == 0;
-        Ok(count)
+        self.reader.read(buffer)
     }
 }
 
@@ -594,24 +569,14 @@ impl Store {
     pub fn queue_open_body(&self, lease: &QueueLease) -> Result<QueuedReader, StoreError> {
         check_lease(&self.connection, lease, &self.lock)?;
         let path = blob_path(&self.root, &lease.blob_id)?;
-        reject_symlink(&path)?;
-        let file = File::open(path)?;
-        if !file.metadata()?.is_file() {
-            return Err(StoreError::UnsafePath);
-        }
         let (expected_size, expected_hash) = self.connection.query_row(
             "SELECT size_bytes,sha256 FROM blob WHERE id=?1",
             [&lease.blob_id],
             |r| Ok((unsigned_column(r, 0)?, r.get(1)?)),
         )?;
         Ok(QueuedReader {
-            file,
+            reader: VerifiedReader::open(&path, expected_size, expected_hash)?,
             _guard: lease.guard.clone(),
-            expected_size,
-            expected_hash,
-            read_bytes: 0,
-            hash: Sha256::new(),
-            verified: false,
         })
     }
 

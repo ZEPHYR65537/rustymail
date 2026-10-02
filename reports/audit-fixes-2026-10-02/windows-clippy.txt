@@ -1,0 +1,2 @@
+    Checking rustymail-server v0.8.0 (D:\jddtest\FSF\crates\server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.47s

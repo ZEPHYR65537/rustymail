@@ -1,6 +1,6 @@
 use rustymail_core::{Address, config::Config};
 use rustymail_server::{LabServer, store_options};
-use rustymail_store::{StorageRuntime, Store};
+use rustymail_store::{StorageRuntime, Store, StoreError};
 use std::{io, net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -97,6 +97,20 @@ impl Harness {
             .unwrap()
             .unwrap()
             .unwrap();
+        // Session cancellation can leave bounded blocking stage cleanup alive.
+        // The instance lock intentionally remains held until that work ends;
+        // waiting for serve_until alone does not join Tokio's blocking pool.
+        timeout(Duration::from_secs(5), async {
+            loop {
+                match Store::open(&self.config.data_dir, store_options(&self.config)) {
+                    Ok(store) => break drop(store),
+                    Err(StoreError::Locked) => tokio::time::sleep(Duration::from_millis(10)).await,
+                    Err(error) => panic!("store failed to reopen after shutdown: {error}"),
+                }
+            }
+        })
+        .await
+        .expect("blocking cleanup did not release the store lock");
         (self.directory, self.config)
     }
 }

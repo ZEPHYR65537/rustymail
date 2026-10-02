@@ -1,0 +1,183 @@
+   Compiling rustymail-server v0.8.0 (D:\jddtest\FSF\crates\server)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.66s
+     Running unittests src\lib.rs (target\debug\deps\rustymail_core-9e108de35c09da63.exe)
+
+running 5 tests
+test tests::rejects_ambiguous_or_injected_addresses ... ok
+test tests::separates_remote_case_from_local_routing ... ok
+test config::tests::rejects_unknown_fields_and_redacts_bad_values ... ok
+test config::tests::parses_full_design_but_requires_explicit_lab_scanning_bypass ... ok
+test config::tests::rejects_unsafe_or_unbounded_settings ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\lib.rs (target\debug\deps\rustymail_protocol-284ed193678b395e.exe)
+
+running 14 tests
+test tests::data_transparency_and_limits_include_crlf ... ok
+test tests::remote_local_parts_are_distinct_but_domain_case_and_exact_duplicates_are_not ... ok
+test tests::duplicate_at_recipient_limit_and_information_commands_keep_envelope ... ok
+test tests::extensions_require_ehlo_and_a_new_tls_session_has_no_old_envelope ... ok
+test tests::borrowed_frames_preserve_chunk_boundaries_transparency_and_limits ... ok
+test tests::helo_cannot_enable_extensions_or_retain_old_envelope ... ok
+test tests::mail_parameters_preserve_body_and_enforce_size_grammar ... ok
+test tests::rejects_parameters_and_numeric_overflow ... ok
+test tests::rejects_smuggling_and_bounded_line_overflow ... ok
+test tests::reset_and_rejected_sender_cannot_reuse_recipients ... ok
+test tests::every_split_and_one_byte_chunks_are_equivalent ... ok
+test tests::rejected_and_duplicate_recipients_have_correct_envelope ... ok
+test tests::generated_state_sequences_never_deliver_without_current_mail_and_recipient ... ok
+test tests::malformed_and_limit_frames_are_invariant_under_every_single_split ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests src\lib.rs (target\debug\deps\rustymail_server-c1fa00e8c1311e64.exe)
+
+running 15 tests
+test auth::tests::plain_rejects_identity_substitution_and_malformed_frames ... ok
+test trace::tests::folded_duplicate_return_paths_are_removed_without_touching_other_fields ... ok
+test auth::tests::rate_window_expiry_does_not_wait_for_the_next_sweep ... ok
+test trace::tests::longest_supported_addresses_fit_the_fixed_expansion_budget ... ok
+test trace::tests::trace_formats_observed_peer_null_path_and_utc_without_injection ... ok
+test transport_boundary_tests::upgrade_drops_prefetched_plaintext_before_reading_new_transport_bytes ... ok
+test logging::tests::blocked_output_drops_excess_records_without_blocking_producers ... ok
+test admin::tests::oversized_frames_fail_before_writing_and_requests_keep_their_limit ... ok
+test admin::tests::maximum_credential_page_survives_json_escaping_and_transport ... ok
+test relay::tests::failed_integrity_framing_or_phase_commit_closes_without_final_dot ... ok
+test relay::tests::fragmented_body_preserves_projection_transparency_and_fixed_reads ... ok
+test revocation::tests::cancelled_permission_check_is_retried_without_a_second_notification ... ok
+test relay::tests::cancelled_network_attempt_closes_socket_but_running_read_keeps_store_lock ... ok
+test auth::tests::cancelled_caller_does_not_release_a_running_hash_budget ... ok
+test auth::tests::phc_work_parameters_are_bounded_before_verification ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.37s
+
+     Running unittests src\bin\rustymailctl.rs (target\debug\deps\rustymailctl-35097df5e07cda49.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src\bin\rustymaild.rs (target\debug\deps\rustymaild-7bed90633636ff4f.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\smtp.rs (target\debug\deps\smtp-ca91b1eaf828f1a2.exe)
+
+running 10 tests
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32300","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"stopped","fields":{}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32308","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32305","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32309","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32311","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"stopped","fields":{}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32310","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"stopped","fields":{}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32314","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32315","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32317","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"stopped","fields":{}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32318","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"smtp_session_closed_with_error","fields":{}}
+{"event":"message_accepted","fields":{"message_id":"22888f883d1d4b6482ed3ea406eaf706","operation_id":"41b12e0e4cd64990befdcfbcac7ad68d"}}
+test per_ip_connection_limit_rejects_before_starting_a_session ... ok
+{"event":"stopped","fields":{}}
+{"event":"message_accepted","fields":{"message_id":"1b2e335d35f04079884953fb48d12522","operation_id":"43071840395b4335b63eeac8b4be1ff6"}}
+test oversize_actual_data_closes_without_executing_trailing_commands ... ok
+test rejects_relay_unknown_users_and_malformed_mail_clears_old_transaction ... ok
+{"event":"stopped","fields":{}}
+{"event":"message_accepted","fields":{"message_id":"6f3bf8ed473e45fa85ad0a445b50ecf0","operation_id":"50aadd42bf654bf98efe7f4e49217a37"}}
+test bare_lf_and_partial_data_never_become_messages ... ok
+{"event":"message_accepted","fields":{"message_id":"8d2a75e29cec4ff0a77f93f1fb2007ef","operation_id":"6591f8304e1440189e3a26a0befd7f95"}}
+{"event":"stopped","fields":{}}
+test multi_recipient_quota_failure_never_partially_delivers ... ok
+{"event":"stopped","fields":{}}
+{"event":"stopped","fields":{}}
+test exact_client_limit_excludes_generated_trace_and_empty_data_is_well_formed ... ok
+test actual_tcp_receives_dot_stuffed_utf8_and_persists_after_restart ... ok
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32328","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"stopped","fields":{}}
+test local_delivery_shares_final_bytes_and_replays_only_identical_representation ... ok
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32330","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"stopped","fields":{}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32332","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"acceptance_outcome_unknown","fields":{"operation_id":"7540a3469b5e4b4bb6c78c26ef631ef5"}}
+{"event":"stopped","fields":{}}
+{"event":"lab_smtp_ready","fields":{"bind":"127.0.0.1:32334","directory_sync":false,"imap":false,"outbound":false,"scanning":false,"tls":false}}
+{"event":"acceptance_outcome_unknown","fields":{"operation_id":"f7c35429c35b405bafc57dfd7a953e80"}}
+{"event":"stopped","fields":{}}
+test storage_faults_never_return_250_and_unknown_commits_close_without_rejection ... ok
+{"event":"stopped","fields":{}}
+test slow_command_expires_instead_of_extending_deadline_per_byte ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.15s
+
+     Running unittests src\lib.rs (target\debug\deps\rustymail_store-d84a77760f27e980.exe)
+
+running 36 tests
+test queue::tests::retry_jitter_and_configuration_have_finite_checked_bounds ... ok
+test m1_tests::inspection_never_initializes_a_missing_store ... ok
+test tests::alias_uid_exhaustion_rolls_back_without_wraparound ... ok
+test tests::cancelling_running_prepare_keeps_lock_and_leaves_only_an_orphan ... ok
+test tests::crash_child_entry ... ok
+test queue::tests::live_owner_and_reader_prevent_reclaim_gc_and_second_store_even_after_expiry ... ok
+test tests::cancelling_a_pending_append_poisoned_the_stage ... ok
+test tests::exclusive_lock_and_future_schema_are_fail_closed ... ok
+test queue::tests::queued_reader_detects_same_length_corruption_before_successful_eof ... ok
+test m1_tests::recovery_accepts_only_a_matching_copy_and_never_overwrites ... ok
+test queue::tests::integrity_reports_cross_table_queue_corruption ... ok
+test identity::tests::authorization_is_rechecked_in_the_accepting_transaction ... ok
+test queue::tests::abandoned_body_is_uncertain_and_stale_generation_cannot_change_it ... ok
+test m1_tests::maintenance_refuses_active_tokens_and_inconsistent_accounting ... ok
+test queue::tests::per_recipient_results_backoff_and_uncertainty_are_independent ... ok
+test tests::export_rejects_same_size_corruption_truncation_and_growth ... ok
+test tests::internal_retry_is_idempotent_but_conflicting_key_is_rejected ... ok
+test queue::tests::expired_tasks_hold_and_clock_steps_stop_claims_without_losing_known_results ... ok
+test m42_tests::mixed_quota_failure_commits_neither_local_mail_nor_remote_responsibility ... ok
+test tests::persists_complete_acceptance_and_account_scoped_export ... ok
+test tests::cancelled_disk_jobs_retain_reservation_and_lock_until_cleanup_finishes ... ok
+test tests::poisoned_stage_cannot_be_accepted_and_missing_blob_is_detected ... ok
+test queue::tests::enqueue_commit_faults_never_publish_partial_recipient_sets ... ok
+test queue::tests::atomic_enqueue_preserves_external_case_and_replays_only_identical_plan ... ok
+test tests::quota_and_missing_recipient_roll_back_every_recipient ... ok
+test tests::reservations_and_instance_lock_live_until_prepared_token_is_dropped ... ok
+test m1_tests::gc_is_bounded_audited_and_preserves_all_retention_roots ... ok
+test tests::streams_the_full_size_limit_without_a_full_message_buffer ... ok
+test queue::tests::version_two_upgrade_is_atomic_and_preserves_existing_local_mail ... ok
+test m1_tests::migration_is_atomic_adopts_only_the_exact_legacy_schema_and_checks_history ... ok
+test m1_tests::interrupted_gc_is_safe_to_rerun_without_replaying_an_old_plan ... ok
+test queue::tests::queue_transactions_recover_before_and_after_commit_without_false_success ... ok
+test m42_tests::mixed_acceptance_is_atomic_replayable_and_authorized_at_commit ... ok
+test tests::child_process_crash_matrix_preserves_only_committed_messages ... ok
+test m1_tests::io_fault_boundaries_never_create_false_acceptance ... ok
+test queue::tests::bounded_cursor_avoids_head_of_line_starvation_and_policy_caps_active_work ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.49s
+
+   Doc-tests rustymail_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rustymail_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rustymail_server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests rustymail_store
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

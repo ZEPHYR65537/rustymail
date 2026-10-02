@@ -1,0 +1,45 @@
+name: Dependency security
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned audit tool
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal
+          cargo +1.94.0 install cargo-audit --version 0.22.2 --locked
+      - name: Fetch current advisories and record provenance
+        run: |
+          mkdir -p reports/local/security
+          git clone --depth=1 https://github.com/RustSec/advisory-db.git "$RUNNER_TEMP/rustsec-db"
+          {
+            date -u +'%Y-%m-%dT%H:%M:%SZ'
+            cargo audit --version
+            git rev-parse HEAD
+            git -C "$RUNNER_TEMP/rustsec-db" log -1 --format='%H %cI'
+            sha256sum Cargo.lock
+          } > reports/local/security/provenance.txt
+      - name: Reject vulnerable dependencies and warnings
+        run: cargo audit --db "$RUNNER_TEMP/rustsec-db" --no-fetch --deny warnings --json > reports/local/security/audit.json
+      - name: Preserve audit result even on failure
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-security
+          path: reports/local/security/
+          if-no-files-found: warn
+          retention-days: 30

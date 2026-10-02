@@ -5,6 +5,7 @@ mod maintenance;
 mod migration;
 mod queue;
 mod runtime;
+mod verified;
 pub use blob::{PreparedMessage, StagedMessage};
 pub use identity::{CredentialRecord, CredentialSummary, Principal, SubmissionIdentity};
 pub use maintenance::{GcCandidate, GcOptions, GcReport, GcRun, OperationSummary};
@@ -565,6 +566,8 @@ impl Store {
 
     /// Export requires both owning account and message ID; a global message ID
     /// alone is never sufficient to read another account's raw mail.
+    /// Success requires EOF length/hash verification. On error, the destination
+    /// may contain partial, unverified bytes; callers must discard that output.
     pub fn export(
         &self,
         address: &Address,
@@ -574,13 +577,10 @@ impl Store {
         if !valid_id(message_id) {
             return Err(StoreError::InvalidId);
         }
-        let id: Option<String> = self.connection.query_row("SELECT m.blob_id FROM message m JOIN mailbox_message mm ON mm.message_id=m.id JOIN mailbox box ON box.id=mm.mailbox_id JOIN account a ON a.id=box.account_id WHERE a.login=?1 AND m.id=?2 LIMIT 1", params![address.local_key(),message_id], |r| r.get(0)).optional()?;
-        let path = blob_path(&self.root, &id.ok_or(StoreError::NotFound)?)?;
-        reject_symlink(&path)?;
-        if !fs::metadata(&path)?.is_file() {
-            return Err(StoreError::UnsafePath);
-        }
-        Ok(io::copy(&mut File::open(path)?, destination)?)
+        let blob: Option<(String, u64, String)> = self.connection.query_row("SELECT b.id,b.size_bytes,b.sha256 FROM message m JOIN blob b ON b.id=m.blob_id JOIN mailbox_message mm ON mm.message_id=m.id JOIN mailbox box ON box.id=mm.mailbox_id JOIN account a ON a.id=box.account_id WHERE a.login=?1 AND m.id=?2 LIMIT 1", params![address.local_key(),message_id], |r| Ok((r.get(0)?, unsigned_column(r, 1)?, r.get(2)?))).optional()?;
+        let (id, size, hash) = blob.ok_or(StoreError::NotFound)?;
+        let mut reader = verified::VerifiedReader::open(&blob_path(&self.root, &id)?, size, hash)?;
+        Ok(io::copy(&mut reader, destination)?)
     }
 
     pub fn check_integrity(&self) -> Result<IntegrityReport, StoreError> {

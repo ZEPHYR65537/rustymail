@@ -144,6 +144,20 @@ def main():
             assert json.loads(run(control, "gc-history").stdout)["runs"][0]["status"] == "complete"
             blob = base / "mail/blobs" / (operation["blob_id"] + ".eml")
             assert blob.parent == base / "mail/blobs" and blob.read_bytes() == stored_raw
+            # The copy itself can succeed despite corruption. CLI success must
+            # require the stored length/hash, and failure must remove its output.
+            for index, damaged in enumerate([
+                bytes([stored_raw[0] ^ 1]) + stored_raw[1:],
+                stored_raw[:-1], stored_raw + b"extra",
+            ]):
+                blob.write_bytes(damaged)
+                rejected_output = base / f"corrupt-export-{index}.eml"
+                rejected = run(control, "mail", "export", "alice@example.com", stored["message_id"],
+                               "--output", str(rejected_output), success=False)
+                assert not rejected_output.exists(), "Failed export left an unverified file"
+                assert not rejected.stdout, "Failed export must not print a success record"
+                assert exported.read_bytes() == stored_raw, "Existing good export changed"
+            blob.write_bytes(stored_raw)
             blob.unlink()  # Synthetic missing-blob fixture; byte-exact copy retained above.
             assert not json.loads(run(control, "check-store", success=False).stdout)["healthy"]
             wrong = base / "wrong.eml"
@@ -171,7 +185,8 @@ def main():
                 "SMTP capability truthfulness", "relay denied", "SMTP final-250 acceptance",
                 "forced process termination", "byte-exact recovery/export", "no export overwrite",
                 "exclusive admin lock", "server restart", "operation lookup", "legacy schema adoption",
-                "GC preview and audited apply", "verified missing-blob recovery", "no recovery overwrite", "offline checkpoint"
+                "GC preview and audited apply", "verified export rejects corruption/truncation/growth and cleans output",
+                "verified missing-blob recovery", "no recovery overwrite", "offline checkpoint"
             ]}, indent=2))
         finally:
             if client is not None:

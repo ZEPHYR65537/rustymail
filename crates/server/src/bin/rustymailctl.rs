@@ -451,7 +451,12 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 options.mode(0o600);
             }
             let mut file = options.open(&output)?;
-            let result = store.export(&address, &message_id, &mut file);
+            let result = store
+                .export(&address, &message_id, &mut file)
+                .and_then(|bytes| {
+                    file.sync_all()?;
+                    Ok(bytes)
+                });
             let bytes = match result {
                 Ok(bytes) => bytes,
                 Err(error) => {
@@ -460,7 +465,6 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                     return Err(error.into());
                 }
             };
-            file.sync_all()?;
             println!(
                 "{}",
                 serde_json::json!({"exported_bytes":bytes,"message_id":message_id})
