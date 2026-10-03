@@ -60,7 +60,8 @@ fn scalar(store: &Store, sql: &str) -> i64 {
 #[tokio::test]
 async fn schema_three_retry_history_is_conservatively_preserved_as_unknown() {
     let dir = tempfile::tempdir().unwrap();
-    let mut store = Store::open(dir.path(), options()).unwrap();
+    let root = dir.path().join("mail");
+    let mut store = Store::open(&root, options()).unwrap();
     seed(
         &mut store,
         "alice@example.com",
@@ -77,7 +78,7 @@ async fn schema_three_retry_history_is_conservatively_preserved_as_unknown() {
         .execute("UPDATE delivery SET attempts=2 WHERE route='relay'", [])
         .unwrap();
     drop(store);
-    let mut store = reopen(dir.path()).await;
+    let mut store = reopen(&root).await;
     let row = store.queue_list("", 1).unwrap().pop().unwrap();
     assert_eq!(row.state, "uncertain");
     assert!(row.possibly_delivered);

@@ -33,8 +33,19 @@ jobs:
             git -C "$RUNNER_TEMP/rustsec-db" log -1 --format='%H %cI'
             sha256sum Cargo.lock
           } > reports/local/security/provenance.txt
-      - name: Reject vulnerable dependencies and warnings
-        run: cargo audit --db "$RUNNER_TEMP/rustsec-db" --no-fetch --deny warnings --json > reports/local/security/audit.json
+      - name: Populate locked dependency index for yanked checks
+        run: cargo fetch --locked
+      - name: Reject vulnerabilities, warnings and incomplete audit lookups
+        run: |
+          if ! cargo audit --db "$RUNNER_TEMP/rustsec-db" --no-fetch --deny warnings --json > reports/local/security/audit.json 2> reports/local/security/audit-stderr.txt; then
+            cat reports/local/security/audit-stderr.txt >&2
+            exit 1
+          fi
+          if [ -s reports/local/security/audit-stderr.txt ]; then
+            cat reports/local/security/audit-stderr.txt >&2
+            echo 'Audit diagnostics require review; incomplete lookups are not a clean result.' >&2
+            exit 1
+          fi
       - name: Preserve audit result even on failure
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

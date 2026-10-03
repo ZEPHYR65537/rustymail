@@ -85,6 +85,8 @@ SQLite 负责这一个数据库事务中的全有或全无；它不能替外部�
 
 状态码来自 [RFC 3463](https://www.rfc-editor.org/rfc/rfc3463)。上游只给了 550 时，本机并不知道一定是“用户不存在”，不能编造 5.1.1；通用 5.0.0 正是为了不声称更多知识。报告使用 ASCII、CRLF、随机 MIME boundary 和 Message-ID，不包含原文、Bcc、认证信息或其他收件人。
 
+本地诊断的 `x-rustymail` 类型使用 [RFC 3464 §2.1.2](https://www.rfc-editor.org/rfc/rfc3464#section-2.1.2) 保留的实验命名空间；它不是伪造的上游 SMTP 回复。可移植的失败分类仍由标准 Status 字段承担。
+
 自动生成资格仅限已经接受的认证 submission。原信为空 reverse-path、来源是 dsn、离线 import 或其他内部来源时，保存 `suppressed` 及原因。头部伪装成普通邮件不能改变数据库来源。外域 reverse-path 必须是在原提交中获准的 send-as；报告再进入同一固定 TLS 上游的队列。本地域目标不存在或配额满则保持 pending，不改投其他地址。
 
 管理 CLI 当前只允许授予本地域 send-as。外域报告路径主要覆盖既有授权/已接受责任在本地域配置变化后的情况，以及可信存储调用者；测试通过一次性域配置变更建立该场景，没有开放任意外域身份授权。
