@@ -1,0 +1,217 @@
+{
+  "checks": [
+    "L01: 15 verified-TLS peer cases: complete command group before replies, fragmentation/coalescing, positional failures, malformed/extra/missing replies, lost final and post-STARTTLS capability reset",
+    "L02: six real process kills at file sync, publication, preparation, before/after commit and after return; replay creates one notification and one UID",
+    "L03: independent receiver pipelining, byte fragmentation, DATA/command boundary, failed recipient and RSET ordering; no DSN extension advertised",
+    "L04: real authenticated submission -> permanent relay failure -> private MIME DSN delivered locally once; quota blockage retains original responsibility and offline maintenance recovers",
+    "L05: authorized external reverse-path is preserved on real TLS; DSN uses MAIL FROM:<>; its own 550 is queryable and cannot generate another report",
+    "L06: expiry scan is independent of future next_attempt_at_ms; DSN delivery-status reports 5.4.7",
+    "L07: actual lost final result -> explicit retry -> later 550 still uncertain; auditable manual close preserves unknown outcome without a false failure DSN"
+  ],
+  "pipeline_attempts": [
+    {
+      "scenario": "ok",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      }
+    },
+    {
+      "scenario": "fragmented",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      }
+    },
+    {
+      "scenario": "mail4",
+      "body_marked": false,
+      "result": {
+        "Temporary": 450
+      }
+    },
+    {
+      "scenario": "mail5",
+      "body_marked": false,
+      "result": {
+        "Permanent": 550
+      }
+    },
+    {
+      "scenario": "rcpt4",
+      "body_marked": false,
+      "result": {
+        "Temporary": 450
+      }
+    },
+    {
+      "scenario": "rcpt5",
+      "body_marked": false,
+      "result": {
+        "Permanent": 550
+      }
+    },
+    {
+      "scenario": "data5",
+      "body_marked": false,
+      "result": {
+        "Permanent": 554
+      }
+    },
+    {
+      "scenario": "421",
+      "body_marked": false,
+      "result": {
+        "Temporary": 421
+      }
+    },
+    {
+      "scenario": "malformed",
+      "body_marked": false,
+      "result": "ConnectionLost"
+    },
+    {
+      "scenario": "extra",
+      "body_marked": false,
+      "result": "ConnectionLost"
+    },
+    {
+      "scenario": "missing",
+      "body_marked": false,
+      "result": "ConnectionLost"
+    },
+    {
+      "scenario": "close",
+      "body_marked": false,
+      "result": "ConnectionLost"
+    },
+    {
+      "scenario": "lost_final",
+      "body_marked": true,
+      "result": "ConnectionLost"
+    },
+    {
+      "scenario": "sequential",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      }
+    },
+    {
+      "scenario": "reset",
+      "body_marked": true,
+      "result": {
+        "Delivered": 250
+      }
+    }
+  ],
+  "process_cuts": [
+    {
+      "boundary": "file",
+      "reports_before_recovery": 0,
+      "reports_after_replay": 1,
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 1,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "boundary": "directories",
+      "reports_before_recovery": 0,
+      "reports_after_replay": 1,
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "boundary": "prepared",
+      "reports_before_recovery": 0,
+      "reports_after_replay": 1,
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "boundary": "before",
+      "reports_before_recovery": 0,
+      "reports_after_replay": 1,
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 1,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "boundary": "after",
+      "reports_before_recovery": 1,
+      "reports_after_replay": 1,
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    },
+    {
+      "boundary": "returned",
+      "reports_before_recovery": 1,
+      "reports_after_replay": 1,
+      "integrity": {
+        "corrupt_blobs": 0,
+        "delivery_mismatches": 0,
+        "missing_blobs": 0,
+        "orphan_blobs": 0,
+        "queue_mismatches": 0,
+        "quota_mismatches": 0,
+        "referenced_blobs": 2,
+        "staging_files": 0,
+        "uid_mismatches": 0,
+        "unexpected_files": 0
+      }
+    }
+  ],
+  "external_messages": 0,
+  "revision": "98f023338be464a10ebd48b4d332dba76004d51d",
+  "working_tree_dirty": false,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "production_ready": false
+}

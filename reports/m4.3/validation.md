@@ -14,9 +14,37 @@ Windows / Rust 1.94.0：严格 Clippy、格式检查、锁定依赖的全 worksp
 
 最新本地 [RustSec 审计](rustsec-audit.json)检查 158 个包（含 5 个工作区包），官方公告库提交 `f8dee89e1b2f2f1eaf548312df7655fe5202a302`，1,288 条公告，0 漏洞、0 警告；启用撤回版本检查。第三方依赖版本没有增加，仅给 store 接入已有 time 依赖。
 
-本地 release 的统一 `rustymail.exe` 为 **7,003,136 字节 / 6.68 MiB**；这不是 Linux 大小或运行内存。工具链、二进制及 LF 规范化源码/证据摘要见[出处记录](provenance.json)。本地记录基于 `035ef02562b6aa6e89249b95533ebe8006646ace` 上的增量工作区，dirty=true，不冒充该基线提交的结果。
+初次实现的本地 release `rustymail.exe` 为 7,003,136 字节；时钟修复后最终版本为 **7,003,648 字节 / 6.68 MiB**，见[最终本地出处](final-local-provenance.json)。这不是 Linux 大小或运行内存。初次工具链、二进制及 LF 规范化源码/证据摘要保留于[出处记录](provenance.json)，它基于 `035ef02562b6aa6e89249b95533ebe8006646ace` 上的增量工作区，dirty=true，不冒充该基线提交的结果。
 
-GitHub 两平台干净检出、Linux VM 存储故障与独立安全工作流结果将在返回后记录；本地通过不代表尚未返回的 CI 已通过。
+## 最终干净检出 CI
+
+最终代码提交 **`98f023338be464a10ebd48b4d332dba76004d51d`** 的 [CI](https://github.com/ZEPHYR65537/rustymail/actions/runs/37100532726) 与[独立安全工作流](https://github.com/ZEPHYR65537/rustymail/actions/runs/37100532742)全部通过。后续提交仅归档证据并补充教材，不改变该代码结果。
+
+| 检查 | 实际结果／原始证据 |
+| --- | --- |
+| Linux 全量 Rust 与协议回归 | 100 项 Rust 测试；M4.3 的 15 个 TLS 对端场景、7 组集成检查、6 个通知强杀位置通过；[Linux 通知证据](ci-linux-lifecycle.json) |
+| Windows 全量 Rust 与协议回归 | 96 项 Rust 测试；同样的独立对端及强杀实验通过；[Windows 通知证据](ci-windows-lifecycle.json) |
+| 严格依赖审计 | 158 个包、1,288 条公告，0 漏洞/警告，且 stderr 为空；[审计 JSON](ci-rustsec-audit.json)、[出处](ci-security-provenance.txt)、[空诊断文件](ci-audit-stderr.txt) |
+| Linux 有限压力 | 三入口共 120 次持久交付，连接/握手/DATA 取消及畸形流量恢复，最终存储健康；[压力记录](ci-linux-pressure.json) |
+| Linux 流式传输与分帧 | 1 MiB/25 MiB 单次 TLS 发送及分帧基准通过；[流式记录](ci-linux-relay-stream.json)、[分帧记录](ci-linux-framing.json) |
+| Linux VM 存储故障 | 13 个同步/提交/迁移/GC/已确认/SMTP 满盘/SQLite 满盘场景；无缺失或损坏的被引用正文、无 UID/配额/队列不一致；[VM 记录](ci-linux-storage.json) |
+| Linux 收信基线 | 4 组有限收信负载；最终完整性通过；[基线记录](ci-linux-benchmark.json) |
+
+全部下载 ZIP 均核对 GitHub 返回的 SHA-256；归档时只规范化文本换行，不改 JSON 数值。[CI 出处](ci-provenance.json)记录 artifact ID、ZIP/文件/日志摘要、任务链接及实际测试数量。适用脚本的 working_tree_dirty 均为 false；它们与本地增量工作区记录分开保存。
+
+内存数据必须连同测量范围阅读：单次 TLS 探针发送约 1 MiB 与 25 MiB 时，采样 RSS 分别为 5,176 / 5,140 KiB，缓冲为 16 KiB，没有出现与整信大小对应的增长；该实验使用未宣告 PIPELINING 的顺序回退路径，排除 Python 对端、存储、队列和 Argon2，5 ms 采样峰值只是下界。三入口鉴权混合压力的完整 daemon 高水位则为 **140,240 KiB**，结束后 RSS 为 **9,412 KiB**，不能把传输探针约 5 MiB 当作整台服务的总内存。
+
+VM 使用受控 QEMU/ext4 写回缓存模型，结束的是虚拟机进程，宿主与硬件仍运行；故障前发布但未引用的孤立文件可以保留待 GC。基线主机没有施加 2 GiB RAM 限制，宿主文件系统和 CI 时延也不代表目标 VPS。本轮不承诺生产吞吐、物理掉电保证或任意负载下固定总资源消耗。
+
+## CI 发现与修复
+
+初次提交 `4b13f04` 的 Linux 测试发现新增迁移 fixture 直接打开了权限较宽的临时目录，触发预期的 `UnsafePermissions` 防护；`cdf80e0` 改为使用存储层创建的私有子目录，未降低权限要求。本地新增测试通过；最终跨平台证据以下述干净检出为准。
+
+同时检查安全工作流的原始 stderr，发现 cargo-audit 0.22.2 在部分 crates.io 索引项不存在、无法完成 yanked 查询时仍返回成功。不能把这样的绿色任务当作完整审计：修复后先 `cargo fetch --locked` 填充索引，并归档/拒绝非空 audit stderr。初次安全运行只证明公告扫描返回零漏洞，不能证明完整撤回版本检查；不采用它作为最终安全证据。本地审计已有完整索引，未出现上述诊断。
+
+初次运行链接、日志摘要与修复提交保存在[修正记录](ci-corrections.json)，没有把失败运行覆盖成通过。
+
+后续复查增加 `98f0233`：通知准备之后的提交及错误退避同样检查壁钟/单调时钟，防止中途时钟跳变把重试期限写到遥远未来。新增可控时钟回归并验证校正/重启后恢复。最终本地 Windows [96 项 Rust 测试](windows-final-tests.txt)及[严格 Clippy](windows-final-clippy.txt)通过；上面的 95 项日志保留初次实现的范围，最终代码版本以 CI 出处为准。
 
 ## 已知边界
 

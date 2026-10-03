@@ -1,0 +1,28 @@
+{
+  "samples": [
+    {
+      "stored_bytes": 1048056,
+      "seconds": 0.0116,
+      "samples": 2,
+      "rss_kib": 5176,
+      "hwm_kib": 5176,
+      "fds": 11
+    },
+    {
+      "stored_bytes": 26214056,
+      "seconds": 0.1226,
+      "samples": 20,
+      "rss_kib": 5140,
+      "hwm_kib": 5140,
+      "fds": 11
+    }
+  ],
+  "sample_interval_ms": 5,
+  "stream_buffer_bytes": 16384,
+  "scope": "one Rust TLS attempt process; excludes Python peer, storage, queue and Argon2; sampled peaks are lower bounds",
+  "external_messages": 0,
+  "revision": "98f023338be464a10ebd48b4d332dba76004d51d",
+  "working_tree_dirty": false,
+  "platform": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "production_ready": false
+}

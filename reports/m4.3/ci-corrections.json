@@ -1,0 +1,11 @@
+{
+  "initial_revision": "4b13f041097e247d027e6a85c793a650a90ca066",
+  "fixed_revision": "cdf80e0c4f6886972641656df9b9f2a51bf47eb4",
+  "failed_ci_run": "https://github.com/ZEPHYR65537/rustymail/actions/runs/37099625943",
+  "incomplete_security_run": "https://github.com/ZEPHYR65537/rustymail/actions/runs/37099626026",
+  "fixture_failure": "schema_three_retry_history_is_conservatively_preserved_as_unknown: UnsafePermissions; use a new private child directory",
+  "failed_ci_log_sha256": "853abdb0fda987531a325ca08a2c5703994cc0c96c418f5c656845d4223acdd0",
+  "audit_log_sha256": "be081427578085df5f4089f6e771bb08a9ca9a510ee6510bdae968fe12235b06",
+  "missing_yanked_lookups": 36,
+  "audit_fix": "cargo fetch --locked before audit; fail on nonempty audit stderr, even with exit status 0"
+}

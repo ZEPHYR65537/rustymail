@@ -1,0 +1,26 @@
+{
+  "code_revision": "98f023338be464a10ebd48b4d332dba76004d51d",
+  "recorded_at": "2026-10-03T05:44:06.370895+00:00",
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)\nbinary: rustc\ncommit-hash: 4a4ef493e3a1488c6e321570238084b38948f6db\ncommit-date: 2026-03-02\nhost: x86_64-pc-windows-msvc\nrelease: 1.94.0\nLLVM version: 21.1.8",
+  "remaining_changes": "documentation and validation evidence only; unrelated untracked directories excluded",
+  "rust_tests_passed": 96,
+  "release_binaries": {
+    "rustymail.exe": {
+      "bytes": 7003648,
+      "sha256": "c572093b95869f89854068f3a5f0e973b3f183004abbb38f8faee4e8b3826ae8"
+    },
+    "rustymaild.exe": {
+      "bytes": 6172160,
+      "sha256": "7fdd4e529f5b79e5d93556a70d23c4386ae3a79096753beff7f890a5d9630859"
+    },
+    "rustymailctl.exe": {
+      "bytes": 4040704,
+      "sha256": "88bf405ab752e72b87c04b482b2320924e7de975e5924ec3eb9a155720950a2b"
+    }
+  },
+  "evidence_sha256_lf": {
+    "windows-final-tests.txt": "c9aec517905db9d2c214a6ec2f58f5dfd636ef8b2d1378dc0c7ea19b7845b04e",
+    "windows-final-clippy.txt": "45cb059565a48db56c63ad105852f218166a29c23afe36aca924774f251c07ff"
+  },
+  "production_ready": false
+}

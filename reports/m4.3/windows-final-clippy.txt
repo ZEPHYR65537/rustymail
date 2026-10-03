@@ -1,0 +1,3 @@
+    Checking rustymail-store v0.10.0 (D:\jddtest\FSF\crates\store)
+    Checking rustymail-server v0.10.0 (D:\jddtest\FSF\crates\server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.49s
