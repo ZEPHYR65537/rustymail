@@ -254,7 +254,7 @@ impl Store {
             StoreError::SizeLimit => "report_size_limit",
             _ => "storage_unavailable",
         };
-        let due = self.runtime.now_ms()?.saturating_add(RETRY_MS);
+        let due = self.queue.now(&self.runtime)?.saturating_add(RETRY_MS);
         self.connection.execute("UPDATE delivery SET notification_error=?2,notification_due_ms=?3 WHERE id=?1 AND state='failed' AND notification_state='pending'",params![id,reason,due])?;
         Ok(())
     }
@@ -269,7 +269,7 @@ impl Store {
         if message.root != self.root {
             return Err(StoreError::InvalidInput);
         }
-        let now = self.runtime.now_ms()?;
+        let now = self.queue.now(&self.runtime)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;

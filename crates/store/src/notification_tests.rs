@@ -88,6 +88,46 @@ async fn schema_three_retry_history_is_conservatively_preserved_as_unknown() {
     ));
     assert!(store.check_integrity().unwrap().healthy());
 }
+
+#[tokio::test]
+async fn clock_jump_during_preparation_cannot_poison_notification_deadlines() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("mail");
+    let clock = TestClock::new();
+    let mut store =
+        Store::open_with_runtime(&root, options(), StorageRuntime::with_clock(clock.clone()))
+            .unwrap();
+    seed(
+        &mut store,
+        "alice@example.com",
+        &["fail@remote.test"],
+        86400,
+    )
+    .await;
+    fail_all(&mut store);
+    let task = next(&mut store);
+    let id = task.delivery_id().to_owned();
+    let prepared = task.prepare().await.unwrap();
+    clock.wall.fetch_add(86_400_000, Ordering::SeqCst);
+    assert!(matches!(
+        store.notification_commit(prepared),
+        Err(StoreError::ClockChanged)
+    ));
+    assert!(matches!(
+        store.notification_failed(&id, &StoreError::Quota),
+        Err(StoreError::ClockChanged)
+    ));
+    assert_eq!(store.queue_show(&id).unwrap().notification_due_ms, 0);
+    assert_eq!(scalar(&store, "SELECT count(*) FROM notification"), 0);
+    // Restore the clock and restart, as required by the existing sticky guard.
+    clock.wall.fetch_sub(86_400_000, Ordering::SeqCst);
+    drop(store);
+    let mut store =
+        Store::open_with_runtime(&root, options(), StorageRuntime::with_clock(clock)).unwrap();
+    notify(&mut store).await;
+    assert_eq!(scalar(&store, "SELECT count(*) FROM notification"), 1);
+    assert!(store.check_integrity().unwrap().healthy());
+}
 async fn seed(store: &mut Store, sender: &str, recipients: &[&str], age: u64) -> String {
     let login = address("alice@example.com");
     let sender = address(sender);
