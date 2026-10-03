@@ -608,7 +608,7 @@ async fn smtp_session(stream: TcpStream, context: SessionContext) -> Result<(), 
             Action::Hello { extended } => {
                 let text = if extended {
                     format!(
-                        "250-{}\r\n250-SIZE {}\r\n250-8BITMIME\r\n{}250 ENHANCEDSTATUSCODES\r\n",
+                        "250-{}\r\n250-SIZE {}\r\n250-8BITMIME\r\n250-PIPELINING\r\n{}250 ENHANCEDSTATUSCODES\r\n",
                         config.hostname,
                         config.limits.message_bytes,
                         if !encrypted && tls.is_some() {

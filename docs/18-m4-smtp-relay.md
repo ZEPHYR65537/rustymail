@@ -1,5 +1,7 @@
 # M4.2：从一封真实发送到持久 TLS 中继
 
+当前版本说明：0.10.0 已实现[失败通知、到期管理与 PIPELINING](22-m43-delivery-lifecycle.md)。下文没有 DSN、schema 3 以及按序等待 MAIL/RCPT 的描述是 0.8.0 的历史范围。
+
 本章对应 0.8.0、schema 3。现在可以通过认证提交邮件，原子保存本地与远端责任，再由后台执行器通过固定上游的 TLS SMTP 连接发送。入站监听仍限制在环回；`serve` 仍拒绝生产启动。没有 IMAP、DSN、域认证、反垃圾或直接 MX 投递。实际证据见 [M4.2 报告](../reports/m4.2/validation.md)。
 
 0.9.0 将单次 SMTP/TLS 引擎抽到 client crate，让 CLI 与队列共用；server/relay.rs 保留队列调度及类型适配。本章源码链接已指向当前位置，新增角色和配置见[统一 CLI 教程](21-unified-cli.md)，不改变下面 0.8.0 报告的验收范围。

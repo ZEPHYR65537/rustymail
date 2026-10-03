@@ -16,7 +16,7 @@ use std::{
 };
 use uuid::Uuid;
 
-const BATCH: usize = 128;
+pub(crate) const BATCH: usize = 128;
 
 struct StoredQueueAcceptance {
     id: String,
@@ -124,6 +124,50 @@ pub struct QueueSummary {
     pub lease_until_ms: Option<i64>,
     pub last_smtp_code: Option<u16>,
     pub diagnostic: Option<String>,
+    pub lifecycle_reason: Option<String>,
+    pub possibly_delivered: bool,
+    pub closed_at_ms: Option<i64>,
+    pub notification_state: String,
+    pub notification_error: Option<String>,
+    pub notification_due_ms: i64,
+    pub report_message_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QueueAdminEvent {
+    pub id: i64,
+    pub delivery_id: String,
+    pub action: String,
+    pub before_state: String,
+    pub after_state: String,
+    pub note: String,
+    pub allow_duplicate: bool,
+    pub extend_expired: bool,
+    pub created_at_ms: i64,
+}
+const SUMMARY: &str = "d.id,d.message_id,d.recipient,d.destination_domain,d.state,d.attempts,d.generation,d.next_attempt_at_ms,d.expires_at_ms,d.lease_until_ms,d.last_smtp_code,d.diagnostic,d.lifecycle_reason,d.possibly_delivered,d.closed_at_ms,d.notification_state,d.notification_error,d.notification_due_ms,(SELECT report_message_id FROM notification n WHERE n.delivery_id=d.id AND n.kind='failure')";
+fn summary(r: &rusqlite::Row<'_>) -> rusqlite::Result<QueueSummary> {
+    Ok(QueueSummary {
+        id: r.get(0)?,
+        message_id: r.get(1)?,
+        recipient: r.get(2)?,
+        destination_domain: r.get(3)?,
+        state: r.get(4)?,
+        attempts: unsigned_column(r, 5)?,
+        generation: unsigned_column(r, 6)?,
+        next_attempt_at_ms: r.get(7)?,
+        expires_at_ms: r.get(8)?,
+        lease_until_ms: r.get(9)?,
+        last_smtp_code: r.get(10)?,
+        diagnostic: r.get(11)?,
+        lifecycle_reason: r.get(12)?,
+        possibly_delivered: r.get(13)?,
+        closed_at_ms: r.get(14)?,
+        notification_state: r.get(15)?,
+        notification_error: r.get(16)?,
+        notification_due_ms: r.get(17)?,
+        report_message_id: r.get(18)?,
+    })
 }
 
 struct LeaseGuard {
@@ -215,7 +259,7 @@ impl QueueRuntime {
     pub(crate) fn active(&self) -> bool {
         self.active.values().any(|value| value.strong_count() > 0)
     }
-    fn now(&mut self, runtime: &StorageRuntime) -> Result<i64, StoreError> {
+    pub(crate) fn now(&mut self, runtime: &StorageRuntime) -> Result<i64, StoreError> {
         let wall = runtime.now_ms()?;
         let mono = runtime.monotonic_ms();
         if let Some((old_wall, old_mono)) = self.clock {
@@ -377,12 +421,42 @@ impl Store {
         if (!after_id.is_empty() && !valid_id(after_id)) || !(1..=BATCH).contains(&limit) {
             return Err(StoreError::InvalidInput);
         }
-        Ok(self.connection.prepare("SELECT id,message_id,recipient,destination_domain,state,attempts,generation,next_attempt_at_ms,expires_at_ms,lease_until_ms,last_smtp_code,diagnostic FROM delivery INDEXED BY queue_list WHERE route='relay' AND id>?1 ORDER BY id LIMIT ?2")?
-            .query_map(params![after_id,limit as i64],|r|Ok(QueueSummary {
-                id:r.get(0)?,message_id:r.get(1)?,recipient:r.get(2)?,destination_domain:r.get(3)?,state:r.get(4)?,
-                attempts:unsigned_column(r,5)?,generation:unsigned_column(r,6)?,next_attempt_at_ms:r.get(7)?,expires_at_ms:r.get(8)?,
-                lease_until_ms:r.get(9)?,last_smtp_code:r.get(10)?,diagnostic:r.get(11)?,
-            }))?.collect::<Result<_,_>>()?)
+        Ok(self.connection.prepare(&format!("SELECT {SUMMARY} FROM delivery d INDEXED BY queue_list WHERE route='relay' AND d.id>?1 ORDER BY d.id LIMIT ?2"))?
+            .query_map(params![after_id,limit as i64],summary)?.collect::<Result<_,_>>()?)
+    }
+
+    pub fn queue_show(&self, id: &str) -> Result<QueueSummary, StoreError> {
+        if !valid_id(id) {
+            return Err(StoreError::InvalidId);
+        }
+        self.connection
+            .query_row(
+                &format!("SELECT {SUMMARY} FROM delivery d WHERE d.id=?1"),
+                [id],
+                summary,
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)
+    }
+
+    /// Separate expiry index: a distant next_attempt must not hide an expired job.
+    pub fn queue_expire(&mut self, limit: usize) -> Result<usize, StoreError> {
+        if !(1..=BATCH).contains(&limit) {
+            return Err(StoreError::InvalidInput);
+        }
+        let now = self.queue.now(&self.runtime)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let ids: Vec<String>=tx.prepare("SELECT id FROM delivery INDEXED BY queue_expiry WHERE route='relay' AND state IN ('pending','deferred') AND expires_at_ms<=?1 ORDER BY expires_at_ms,id LIMIT ?2")?
+            .query_map(params![now,limit as i64],|r|r.get(0))?.collect::<Result<_,_>>()?;
+        for id in &ids {
+            tx.execute("UPDATE delivery SET state=CASE WHEN possibly_delivered=1 THEN 'uncertain' ELSE 'failed' END,lifecycle_reason='expired',diagnostic=CASE WHEN possibly_delivered=1 THEN 'expired retry; earlier outcome remains unknown' ELSE 'delivery lifetime exceeded' END,notification_due_ms=0 WHERE id=?1",[id])?;
+        }
+        if !ids.is_empty() {
+            commit(tx, &self.runtime)?;
+        }
+        Ok(ids.len())
     }
 
     /// Recover only attempts whose actual owners/readers have gone away.
@@ -397,20 +471,16 @@ impl Store {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let rows: Vec<(String,String)>=tx.prepare("SELECT d.id,q.phase FROM delivery d INDEXED BY queue_recovery JOIN queue_lease q ON q.delivery_id=d.id WHERE d.route='relay' AND d.state='leased' AND d.id>?1 ORDER BY d.id LIMIT ?2")?
+        let rows: Vec<(String,bool)>=tx.prepare("SELECT d.id,(q.phase='body' OR d.possibly_delivered=1) FROM delivery d INDEXED BY queue_recovery JOIN queue_lease q ON q.delivery_id=d.id WHERE d.route='relay' AND d.state='leased' AND d.id>?1 ORDER BY d.id LIMIT ?2")?
             .query_map(params![self.queue.recovery_cursor,limit as i64],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
         let mut recovered = 0;
-        for (id, phase) in &rows {
+        for (id, unknown) in &rows {
             if self.queue.active.contains_key(id) {
                 continue;
             }
-            let state = if phase == "body" {
-                "uncertain"
-            } else {
-                "deferred"
-            };
-            tx.execute("UPDATE delivery SET state=?2,lease_token=NULL,lease_until_ms=NULL,next_attempt_at_ms=?3,last_smtp_code=NULL,diagnostic='attempt owner disappeared' WHERE id=?1",
-                params![id,state,later(now,1_800_000)?])?;
+            let state = if *unknown { "uncertain" } else { "deferred" };
+            tx.execute("UPDATE delivery SET state=?2,lease_token=NULL,lease_until_ms=NULL,next_attempt_at_ms=?3,last_smtp_code=NULL,diagnostic='attempt owner disappeared',possibly_delivered=?4 WHERE id=?1",
+                params![id,state,later(now,1_800_000)?,unknown])?;
             tx.execute("DELETE FROM queue_lease WHERE delivery_id=?1", [id])?;
             recovered += 1;
         }
@@ -438,6 +508,7 @@ impl Store {
         }
         let now = self.queue.now(&self.runtime)?;
         self.queue_recover(BATCH)?;
+        self.queue_expire(BATCH)?;
         let mut domains = BTreeMap::<String, usize>::new();
         for weak in self.queue.active.values() {
             if let Some(guard) = weak.upgrade() {
@@ -475,8 +546,15 @@ impl Store {
         } in &candidates
         {
             last = Some((*due, id.clone()));
-            if *expires <= now || *attempts == i64::MAX || *generation == i64::MAX {
-                tx.execute("UPDATE delivery SET state='hold',diagnostic='expired or attempt counter exhausted' WHERE id=?1",[id])?;
+            if self.queue.active.contains_key(id) {
+                continue;
+            }
+            if *expires <= now {
+                // The separate bounded expiry batch may not yet have reached this row.
+                continue;
+            }
+            if *attempts == i64::MAX || *generation == i64::MAX {
+                tx.execute("UPDATE delivery SET state='hold',lifecycle_reason='counter',diagnostic='attempt counter exhausted' WHERE id=?1",[id])?;
                 continue;
             }
             let recipient = Address::parse(recipient).map_err(|_| StoreError::Integrity)?;
@@ -592,7 +670,17 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let phase = check_lease(&tx, &lease, &self.lock)?;
-        let (state, code, diagnostic) = match outcome {
+        let was_unknown: bool = tx.query_row(
+            "SELECT possibly_delivered FROM delivery WHERE id=?1",
+            [&lease.id],
+            |r| r.get(0),
+        )?;
+        let reason = match &outcome {
+            QueueResult::Permanent(_) => Some("smtp_permanent"),
+            QueueResult::Hold => Some("content"),
+            _ => None,
+        };
+        let (mut state, code, mut diagnostic) = match outcome {
             QueueResult::Delivered(code) if (200..300).contains(&code) && phase == "body" => {
                 ("delivered", Some(code), "remote accepted")
             }
@@ -616,9 +704,13 @@ impl Store {
             ),
             _ => return Err(StoreError::InvalidInput),
         };
+        if was_unknown && state != "delivered" {
+            state = "uncertain";
+            diagnostic = "retry ended; earlier outcome remains unknown";
+        }
         // A clock discontinuity must not prevent recording a known remote result.
-        tx.execute("UPDATE delivery SET state=?2,lease_token=NULL,lease_until_ms=NULL,last_smtp_code=?3,diagnostic=?4,next_attempt_at_ms=?5 WHERE id=?1",
-            params![lease.id,state,code,diagnostic,now.saturating_add(lease.retry_ms)])?;
+        tx.execute("UPDATE delivery SET state=?2,lease_token=NULL,lease_until_ms=NULL,last_smtp_code=?3,diagnostic=?4,next_attempt_at_ms=?5,lifecycle_reason=?6,possibly_delivered=?7 WHERE id=?1",
+            params![lease.id,state,code,diagnostic,now.saturating_add(lease.retry_ms),reason,state=="uncertain"])?;
         tx.execute("DELETE FROM queue_lease WHERE delivery_id=?1", [&lease.id])?;
         commit(tx, &self.runtime)?;
         // Readers can keep the guard alive after finish; capacity remains held
@@ -630,12 +722,32 @@ impl Store {
         if !valid_id(id) {
             return Err(StoreError::InvalidId);
         }
+        let now = self.runtime.now_ms()?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if tx.execute("UPDATE delivery SET state='hold',diagnostic='held by administrator' WHERE id=?1 AND route='relay' AND state IN ('pending','deferred','uncertain','hold')",[id])?!=1 {
+        let old: String = tx
+            .query_row(
+                "SELECT state FROM delivery WHERE id=?1 AND route='relay'",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        if tx.execute("UPDATE delivery SET state='hold',lifecycle_reason='manual',possibly_delivered=(possibly_delivered=1 OR state='uncertain'),diagnostic='held by administrator' WHERE id=?1 AND route='relay' AND closed_at_ms IS NULL AND state IN ('pending','deferred','uncertain','hold')",[id])?!=1 {
             return Err(StoreError::InvalidInput);
         }
+        admin_event(
+            &tx,
+            id,
+            "hold",
+            &old,
+            "hold",
+            "operator requested hold",
+            false,
+            false,
+            now,
+        )?;
         commit(tx, &self.runtime)
     }
 
@@ -652,10 +764,11 @@ impl Store {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let (state,expires,age):(String,i64,i64)=tx.query_row("SELECT d.state,d.expires_at_ms,q.max_age_seconds FROM delivery d JOIN queue_message q ON q.message_id=d.message_id WHERE d.id=?1 AND d.route='relay'",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(StoreError::NotFound)?;
+        let (state,expires,age,closed):(String,i64,i64,Option<i64>)=tx.query_row("SELECT d.state,d.expires_at_ms,q.max_age_seconds,d.closed_at_ms FROM delivery d JOIN queue_message q ON q.message_id=d.message_id WHERE d.id=?1 AND d.route='relay'",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?.ok_or(StoreError::NotFound)?;
         // A hold can originate from uncertainty. The state alone cannot prove
         // no remote acceptance, so require duplicate consent for either state.
         if !matches!(state.as_str(), "deferred" | "uncertain" | "hold")
+            || closed.is_some()
             || ((state == "uncertain" || state == "hold") && !allow_duplicate)
             || (expires <= now && !extend_expired)
         {
@@ -666,13 +779,97 @@ impl Store {
         } else {
             expires
         };
-        tx.execute("UPDATE delivery SET state='pending',next_attempt_at_ms=?2,expires_at_ms=?3,diagnostic='explicit administrator retry' WHERE id=?1",params![id,now,expires])?;
+        tx.execute("UPDATE delivery SET state='pending',next_attempt_at_ms=?2,expires_at_ms=?3,lifecycle_reason=NULL,diagnostic='explicit administrator retry' WHERE id=?1",params![id,now,expires])?;
+        admin_event(
+            &tx,
+            id,
+            "retry",
+            &state,
+            "pending",
+            "operator requested retry",
+            allow_duplicate,
+            extend_expired,
+            now,
+        )?;
         commit(tx, &self.runtime)
     }
 
-    pub(crate) fn queue_integrity_mismatches(&self) -> Result<u64, StoreError> {
-        Ok(self.connection.query_row("SELECT (SELECT count(*) FROM delivery d LEFT JOIN queue_message m ON m.message_id=d.message_id LEFT JOIN queue_lease q ON q.delivery_id=d.id WHERE (d.route='relay' AND (m.message_id IS NULL OR ((d.state='leased') != (q.delivery_id IS NOT NULL)) OR ((d.state='leased') != (d.lease_token IS NOT NULL)) OR (d.lease_token IS NOT NULL AND length(d.lease_token)!=32))) OR (d.route!='relay' AND q.delivery_id IS NOT NULL)) + (SELECT count(*) FROM queue_message q WHERE NOT EXISTS(SELECT 1 FROM delivery d WHERE d.message_id=q.message_id AND d.route='relay'))",[],|r|unsigned_column(r,0))?)
+    /// Close the operational obligation without claiming delivery or non-delivery.
+    pub fn queue_close_unknown(&mut self, id: &str, note: &str) -> Result<(), StoreError> {
+        if !valid_id(id)
+            || note.is_empty()
+            || note.len() > 512
+            || !note.bytes().all(|b| (32..=126).contains(&b))
+        {
+            return Err(StoreError::InvalidInput);
+        }
+        let now = self.runtime.now_ms()?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let old: String = tx
+            .query_row(
+                "SELECT state FROM delivery WHERE id=?1 AND route='relay'",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        if tx.execute("UPDATE delivery SET state='uncertain',closed_at_ms=?2,diagnostic='unknown outcome closed by administrator' WHERE id=?1 AND route='relay' AND state IN ('uncertain','hold') AND possibly_delivered=1 AND closed_at_ms IS NULL",params![id,now])?!=1 { return Err(StoreError::InvalidInput); }
+        admin_event(
+            &tx,
+            id,
+            "close_unknown",
+            &old,
+            "uncertain",
+            note,
+            false,
+            false,
+            now,
+        )?;
+        commit(tx, &self.runtime)
     }
+
+    pub fn queue_history(
+        &self,
+        id: &str,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<QueueAdminEvent>, StoreError> {
+        if !valid_id(id) || after < 0 || !(1..=BATCH).contains(&limit) {
+            return Err(StoreError::InvalidInput);
+        }
+        Ok(self.connection.prepare("SELECT id,delivery_id,action,before_state,after_state,note,allow_duplicate,extend_expired,created_at_ms FROM queue_admin_event WHERE delivery_id=?1 AND id>?2 ORDER BY id LIMIT ?3")?
+            .query_map(params![id,after,limit as i64],|r|Ok(QueueAdminEvent{id:r.get(0)?,delivery_id:r.get(1)?,action:r.get(2)?,before_state:r.get(3)?,after_state:r.get(4)?,note:r.get(5)?,allow_duplicate:r.get(6)?,extend_expired:r.get(7)?,created_at_ms:r.get(8)?}))?.collect::<Result<_,_>>()?)
+    }
+
+    pub fn queue_report_deliveries(&self, id: &str) -> Result<Vec<QueueSummary>, StoreError> {
+        if !valid_id(id) {
+            return Err(StoreError::InvalidId);
+        }
+        Ok(self.connection.prepare(&format!("SELECT {SUMMARY} FROM delivery d WHERE message_id=(SELECT report_message_id FROM notification WHERE delivery_id=?1 AND kind='failure') ORDER BY recipient LIMIT 128"))?
+            .query_map([id],summary)?.collect::<Result<_,_>>()?)
+    }
+
+    pub(crate) fn queue_integrity_mismatches(&self) -> Result<u64, StoreError> {
+        Ok(self.connection.query_row("SELECT (SELECT count(*) FROM delivery d LEFT JOIN queue_message m ON m.message_id=d.message_id LEFT JOIN queue_lease q ON q.delivery_id=d.id WHERE (d.route='relay' AND (m.message_id IS NULL OR ((d.state='leased') != (q.delivery_id IS NOT NULL)) OR ((d.state='leased') != (d.lease_token IS NOT NULL)) OR (d.lease_token IS NOT NULL AND length(d.lease_token)!=32))) OR (d.route!='relay' AND q.delivery_id IS NOT NULL)) + (SELECT count(*) FROM queue_message q WHERE NOT EXISTS(SELECT 1 FROM delivery d WHERE d.message_id=q.message_id AND d.route='relay')) + (SELECT count(*) FROM delivery d WHERE ((d.notification_state='created') != EXISTS(SELECT 1 FROM notification n WHERE n.delivery_id=d.id AND n.kind='failure')) OR (d.closed_at_ms IS NOT NULL AND (d.state!='uncertain' OR d.possibly_delivered!=1)) OR (d.state='failed' AND d.possibly_delivered=1))",[],|r|unsigned_column(r,0))?)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn admin_event(
+    tx: &Transaction<'_>,
+    id: &str,
+    action: &str,
+    old: &str,
+    new: &str,
+    note: &str,
+    duplicate: bool,
+    extend: bool,
+    now: i64,
+) -> Result<(), StoreError> {
+    tx.execute("INSERT INTO queue_admin_event(delivery_id,action,before_state,after_state,note,allow_duplicate,extend_expired,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![id,action,old,new,note,duplicate,extend,now])?;
+    Ok(())
 }
 
 #[cfg(test)]

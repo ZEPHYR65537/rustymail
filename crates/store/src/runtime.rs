@@ -49,6 +49,9 @@ pub enum FaultPoint {
     GcDirectorySync,
     QueueBeforeCommit,
     QueueAfterCommit,
+    NotificationPrepared,
+    NotificationBeforeCommit,
+    NotificationAfterCommit,
 }
 
 impl FaultPoint {
@@ -75,6 +78,9 @@ impl FaultPoint {
             Self::GcDirectorySync => "gc_directory_sync",
             Self::QueueBeforeCommit => "queue_before_commit",
             Self::QueueAfterCommit => "queue_after_commit",
+            Self::NotificationPrepared => "notification_prepared",
+            Self::NotificationBeforeCommit => "notification_before_commit",
+            Self::NotificationAfterCommit => "notification_after_commit",
         }
     }
 }

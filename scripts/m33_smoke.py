@@ -35,7 +35,7 @@ def main():
                 if role == 'smtp' and tls:
                     assert client.starttls(context=lab.context)[0] == 220
                     assert client.ehlo()[0] == 250
-                capabilities = {'size', '8bitmime', 'enhancedstatuscodes'}
+                capabilities = {'size', '8bitmime', 'enhancedstatuscodes', 'pipelining'}
                 if not tls:
                     capabilities.add('starttls')
                 elif role != 'smtp':
@@ -50,7 +50,7 @@ def main():
                     assert client.docmd('AUTH', 'PLAIN')[0] == 502
         with lab.connect('submissions', authenticate=True) as client:
             assert client.ehlo()[0] == 250
-            assert set(client.esmtp_features) == {'size', '8bitmime', 'enhancedstatuscodes'}
+            assert set(client.esmtp_features) == {'size', '8bitmime', 'enhancedstatuscodes', 'pipelining'}
         checks.append('C01: exact pre/post TLS and AUTH capability sets; unauthenticated submission denied')
 
         with lab.connect() as client:

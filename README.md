@@ -4,7 +4,7 @@
 
 项目仓库：[ZEPHYR65537/rustymail](https://github.com/ZEPHYR65537/rustymail)。
 
-**当前是 0.9.0 / M4.2 L0 + 统一 CLI：同一个 `rustymail` 可作为 SMTP 提交客户端、实验服务器和管理工具。它还不是生产邮件服务器。** 已有固定上游 TLS 发送、持久队列与本地/远端原子混合提交；IMAP、DSN、域认证和反垃圾尚未实现，入站仍限环回。按[教程总目录](docs/06-learning-guide.md)学习，或运行[统一 CLI 实验](docs/21-unified-cli.md)。服务端验收见 [M4.2 报告](reports/m4.2/validation.md)，本轮见 [CLI 报告](reports/cli/validation.md)；下一步仍为 M4.3 通知与失败生命周期。
+**当前是 0.10.0 / M4.3 L0 + 统一 CLI：同一个 `rustymail` 可作为 SMTP 提交客户端、实验服务器和管理工具。它还不是生产邮件服务器。** 已有固定上游 TLS 发送、持久队列、本地/远端原子混合提交、失败 DSN、到期处理及 PIPELINING；IMAP、域认证和反垃圾尚未实现，入站仍限环回。按[教程总目录](docs/06-learning-guide.md)学习，或运行[统一 CLI 实验](docs/21-unified-cli.md)。本轮实现及证据见[失败生命周期教程](docs/22-m43-delivery-lifecycle.md)与 [M4.3 报告](reports/m4.3/validation.md)；下一步为 M5.1 的 IMAP literal 实验和只读邮箱访问。
 
 0.3.1 修复磁盘任务取消、撤销通知丢失和管理响应超限，复用 DATA 行缓冲并收紧组合资源预算。原理与保留限制见[取消与资源边界教程](docs/13-cancellation-and-bounds.md)，回归证据见[修复验证报告](reports/0.3.1/validation.md)。
 
@@ -90,6 +90,7 @@ rustymail serve --config deploy/rustymail.lab.toml --mode lab
 20. [审计修复：校验导出与依赖审计](docs/19-verified-export-and-dependency-audit.md)：成功 EOF、失败产物和随时间变化的安全证据。
 21. [M4.3 具体实施计划](docs/20-m43-delivery-lifecycle-plan.md)：通知事务、DSN、到期／未知结果及 PIPELINING 的范围与验收。
 22. [统一 CLI 与 SMTP 提交客户端](docs/21-unified-cli.md)：角色入口、独立配置、有限快照、共享传输、逐人结果和未知结果处理。
+23. [M4.3：失败生命周期与流水线](docs/22-m43-delivery-lifecycle.md)：事务 outbox、失败报告、未知结果、到期扫描、管理记录和双向并行 I/O。
 
 ## 配套文件
 
@@ -102,7 +103,7 @@ rustymail serve --config deploy/rustymail.lab.toml --mode lab
 | [deploy/rustymail.client.example.toml](deploy/rustymail.client.example.toml) | 独立发信配置；相对路径按配置文件目录解析；不含密码明文 |
 | [deploy/rustymail.example.toml](deploy/rustymail.example.toml) | 完整配置契约；`check` 可验证；扫描必需，因此不能用来启动实验接收器 |
 | [deploy/rustymail.service.in](deploy/rustymail.service.in) | 未来 Linux 服务模板；当前不可直接启动 |
-| [存储迁移](crates/store/migrations/0003.sql) | 当前 `user_version=3`，新增队列表示、尝试阶段与索引；保留所有已接受邮件 |
+| [存储迁移](crates/store/migrations/0004.sql) | 当前 `user_version=4`，新增失败通知状态、独立到期索引和管理记录；保留原邮件与通知关联 |
 | [第一轮验证报告](reports/0.1.0-lab/validation.md) | 0.1.0 的历史测试、依赖和进程故障证据 |
 | [M1 验证报告](reports/m1/validation.md) | 0.2.0 的迁移、维护、Linux VM 故障与性能原始数据 |
 | [M2 验证报告](reports/m2/validation.md) | 0.3.0 的 TLS、身份、Unix 管理证据及依赖审计 |
@@ -112,6 +113,7 @@ rustymail serve --config deploy/rustymail.lab.toml --mode lab
 | [M4.1 验证报告](reports/m4.1/validation.md) | 0.7.0 的队列、租约、故障恢复及原有能力回归证据 |
 | [M4.2 验证报告](reports/m4.2/validation.md) | 0.8.0 的真实 TLS 中继、混合提交、网络取消和流式内存证据 |
 | [CLI 验证报告](reports/cli/validation.md) | 0.9.0 的统一入口、客户端提交、证书拒绝、结果分类与原功能回归 |
+| [M4.3 验证报告](reports/m4.3/validation.md) | 0.10.0 的 DSN、到期、人工处理、PIPELINING、迁移与进程强杀证据 |
 | [验证记录](docs/validation.md) | 设计阶段的历史静态检查，以及各阶段验证报告入口 |
 
 默认基线为单台 Linux VPS、1–100 个邮箱、2 vCPU / 2 GiB RAM、独立持久磁盘。它是项目的容量设计起点，不是测量结论。第一种生产部署先采用固定上游中继；完整目标还包括自研直接 MX 投递。生产发布前必须通过[发布门槛](docs/07-implementation-plan.md)，不能用完成阶段一代替整个目标。

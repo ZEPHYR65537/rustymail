@@ -3,15 +3,22 @@ mod blob;
 mod identity;
 mod maintenance;
 mod migration;
+mod notification;
 mod queue;
 mod runtime;
 mod verified;
 pub use blob::{PreparedMessage, StagedMessage};
 pub use identity::{CredentialRecord, CredentialSummary, Principal, SubmissionIdentity};
 pub use maintenance::{GcCandidate, GcOptions, GcReport, GcRun, OperationSummary};
+#[cfg(any(test, feature = "test-support"))]
+pub use migration::legacy_lab_fixture;
 pub use migration::{CURRENT_VERSION, MigrationRecord};
+pub use notification::{
+    NotificationPolicy, NotificationTask, NotificationWork, PreparedNotification,
+};
 pub use queue::{
-    QueueBody, QueueLease, QueuePlan, QueuePolicy, QueueResult, QueueSummary, QueuedReader,
+    QueueAdminEvent, QueueBody, QueueLease, QueuePlan, QueuePolicy, QueueResult, QueueSummary,
+    QueuedReader,
 };
 pub use runtime::{Clock, FaultPoint, StorageRuntime, SystemClock};
 
@@ -196,6 +203,28 @@ fn unsigned_column(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<u6
 }
 
 impl Store {
+    pub fn set_account_quota(&mut self, address: &Address, bytes: u64) -> Result<(), StoreError> {
+        if bytes > i64::MAX as u64 {
+            return Err(StoreError::InvalidInput);
+        }
+        let used: u64 = self
+            .connection
+            .query_row(
+                "SELECT used_bytes FROM account WHERE login=?1",
+                [address.local_key()],
+                |r| unsigned_column(r, 0),
+            )
+            .optional()?
+            .ok_or(StoreError::NotFound)?;
+        if bytes < used {
+            return Err(StoreError::Quota);
+        }
+        self.connection.execute(
+            "UPDATE account SET quota_bytes=?2 WHERE login=?1",
+            params![address.local_key(), bytes as i64],
+        )?;
+        Ok(())
+    }
     pub fn open(path: impl AsRef<Path>, options: StoreOptions) -> Result<Self, StoreError> {
         Self::open_with_runtime(path, options, StorageRuntime::default())
     }

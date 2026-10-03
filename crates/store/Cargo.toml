@@ -10,6 +10,7 @@ publish.workspace = true
 test-support = []
 
 [dependencies]
+time.workspace = true
 rustymail-core.workspace = true
 fs2.workspace = true
 rusqlite.workspace = true
@@ -29,6 +30,10 @@ required-features = ["test-support"]
 
 [[example]]
 name = "m41_probe"
+required-features = ["test-support"]
+
+[[example]]
+name = "m43_probe"
 required-features = ["test-support"]
 
 [lints]

@@ -87,6 +87,27 @@ enum Command {
 
 #[derive(Subcommand)]
 enum QueueCommand {
+    Show {
+        delivery_id: String,
+    },
+    /// Expire one bounded batch and create due notifications offline; no sockets.
+    Maintain {
+        #[arg(long, default_value_t = 16)]
+        limit: usize,
+    },
+    /// Resolve the operational duty while retaining an unknown delivery outcome.
+    CloseUnknown {
+        delivery_id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    History {
+        delivery_id: String,
+        #[arg(long, default_value_t = 0)]
+        after_id: i64,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     List {
         #[arg(long, default_value = "")]
         after_id: String,
@@ -128,6 +149,11 @@ enum QueueCommand {
 
 #[derive(Subcommand)]
 enum AccountCommand {
+    /// Change quota offline; cannot reduce below currently used bytes.
+    Quota {
+        address: String,
+        bytes: u64,
+    },
     Disable {
         address: String,
     },
@@ -313,6 +339,73 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", serde_json::json!({"checkpoint":"complete"}));
         }
         Command::Queue { command } => match command {
+            QueueCommand::Show { delivery_id } => {
+                println!(
+                    "{}",
+                    serde_json::json!({"delivery":store.queue_show(&delivery_id)?,"report_deliveries":store.queue_report_deliveries(&delivery_id)?})
+                );
+            }
+            QueueCommand::Maintain { limit } => {
+                if !(1..=128).contains(&limit) {
+                    return Err("limit must be 1..128".into());
+                }
+                let expired = store.queue_expire(limit)?;
+                let policy = crate::relay::notification_policy(&config);
+                let (mut created, mut suppressed, mut pending) = (0, 0, 0);
+                for _ in 0..limit {
+                    match store.notification_next(&policy) {
+                        Ok(rustymail_store::NotificationWork::Empty) => break,
+                        Ok(rustymail_store::NotificationWork::Suppressed) => suppressed += 1,
+                        Ok(rustymail_store::NotificationWork::Prepare(task)) => {
+                            let id = task.delivery_id().to_owned();
+                            let result = match task.prepare().await {
+                                Ok(p) => store.notification_commit(p),
+                                Err(e) => Err(e),
+                            };
+                            match result {
+                                Ok(_) => created += 1,
+                                Err(e) => {
+                                    store.notification_failed(&id, &e)?;
+                                    pending += 1;
+                                }
+                            }
+                        }
+                        Err(rustymail_store::StoreError::ClockChanged) => {
+                            return Err(rustymail_store::StoreError::ClockChanged.into());
+                        }
+                        Err(_) => {
+                            pending += 1;
+                            break;
+                        }
+                    }
+                }
+                println!(
+                    "{}",
+                    serde_json::json!({"expired":expired,"reports_created":created,"suppressed":suppressed,"pending_errors":pending,"scan_limit":limit,"transmitted":false})
+                );
+                if pending > 0 {
+                    return Err("some notifications remain pending; inspect queue show".into());
+                }
+            }
+            QueueCommand::CloseUnknown {
+                delivery_id,
+                reason,
+            } => {
+                store.queue_close_unknown(&delivery_id, &reason)?;
+                println!(
+                    "{}",
+                    serde_json::json!({"closed":delivery_id,"outcome":"unknown"})
+                );
+            }
+            QueueCommand::History {
+                delivery_id,
+                after_id,
+                limit,
+            } => {
+                for event in store.queue_history(&delivery_id, after_id, limit)? {
+                    println!("{}", serde_json::to_string(&event)?);
+                }
+            }
             QueueCommand::List { after_id, limit } => {
                 for row in store.queue_list(&after_id, limit)? {
                     println!("{}", serde_json::to_string(&row)?);
@@ -394,6 +487,16 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
         },
+        Command::Account {
+            command: AccountCommand::Quota { address, bytes },
+        } => {
+            let address = Address::parse(&address)?;
+            store.set_account_quota(&address, bytes)?;
+            println!(
+                "{}",
+                serde_json::json!({"account":address.local_key(),"quota_bytes":bytes})
+            );
+        }
         Command::Account {
             command:
                 AccountCommand::Add {

@@ -3,13 +3,18 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 pub(crate) const BASE: &str = include_str!("../migrations/0001.sql");
 const MAINTENANCE: &str = include_str!("../migrations/0002.sql");
-const MIGRATIONS: [(u32, &str, &str); 3] = [
+const MIGRATIONS: [(u32, &str, &str); 4] = [
     (1, "initial_store", BASE),
     (2, "maintenance_history", MAINTENANCE),
     (3, "outbound_queue", include_str!("../migrations/0003.sql")),
+    (
+        4,
+        "delivery_lifecycle",
+        include_str!("../migrations/0004.sql"),
+    ),
 ];
 
 #[derive(Debug, Serialize)]
@@ -107,4 +112,65 @@ pub(crate) fn history(connection: &Connection) -> Result<Vec<MigrationRecord>, S
             version: r.get(0)?, name: r.get(1)?, sha256: r.get(2)?,
             applied_at_ms: r.get(3)?, adopted: r.get(4)?,
         }))?.collect::<Result<_, _>>()?)
+}
+
+/// Only for disposable compatibility fixtures, never exposed by normal binaries.
+/// Rebuild delivery using the published schema instead of editing its SQL text.
+#[cfg(any(test, feature = "test-support"))]
+pub fn legacy_lab_fixture(connection: &mut Connection, version: u32) -> Result<(), StoreError> {
+    if !(1..=3).contains(&version) || validate(connection)? != CURRENT_VERSION {
+        return Err(StoreError::InvalidInput);
+    }
+    if version < 3
+        && connection.query_row("SELECT count(*) FROM queue_message", [], |r| {
+            r.get::<_, i64>(0)
+        })? > 0
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    let canonical = Connection::open_in_memory()?;
+    canonical.execute_batch(BASE)?;
+    let columns: Vec<String> = canonical
+        .prepare("SELECT name FROM pragma_table_info('delivery')")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    let columns = columns.join(",");
+    let start = BASE
+        .find("CREATE TABLE delivery (")
+        .ok_or(StoreError::Integrity)?;
+    let end = BASE
+        .find("CREATE TABLE mailbox_message (")
+        .ok_or(StoreError::Integrity)?;
+    let foreign: bool = connection.pragma_query_value(None, "foreign_keys", |r| r.get(0))?;
+    connection.pragma_update(None, "foreign_keys", false)?;
+    let result = (|| {
+        let tx = connection.transaction()?;
+        tx.execute_batch(&format!("CREATE TEMP TABLE legacy_delivery AS SELECT {columns} FROM delivery; DROP TABLE queue_admin_event; DROP TABLE delivery;"))?;
+        tx.execute_batch(&BASE[start..end])?;
+        tx.execute_batch(
+            "INSERT INTO delivery SELECT * FROM legacy_delivery; DROP TABLE legacy_delivery;",
+        )?;
+        if version < 3 {
+            tx.execute_batch("DROP TABLE queue_lease; DROP TABLE queue_message;")?;
+        } else {
+            let sql = MIGRATIONS[2].2;
+            tx.execute_batch(
+                &sql[sql
+                    .find("CREATE INDEX queue_ready")
+                    .ok_or(StoreError::Integrity)?..],
+            )?;
+        }
+        if version == 1 {
+            tx.execute_batch(
+                "DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration;",
+            )?;
+        } else {
+            tx.execute("DELETE FROM schema_migration WHERE version>?1", [version])?;
+        }
+        tx.pragma_update(None, "user_version", version)?;
+        tx.commit()?;
+        Ok(())
+    })();
+    connection.pragma_update(None, "foreign_keys", foreign)?;
+    result
 }

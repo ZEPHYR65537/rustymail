@@ -5,7 +5,9 @@ use rustymail_client::{
     smtp::{AttemptResult, Message, SmtpClient},
 };
 use rustymail_core::{Address, config::Config};
-use rustymail_store::{QueueBody, QueueLease, QueuePolicy, QueueResult};
+use rustymail_store::{
+    NotificationPolicy, NotificationWork, QueueBody, QueueLease, QueuePolicy, QueueResult,
+};
 use std::{
     future::Future,
     io::{self, Read},
@@ -15,6 +17,39 @@ use std::{
 use tokio::time::timeout;
 fn seconds(n: u64) -> Duration {
     Duration::from_secs(n)
+}
+
+pub fn notification_policy(config: &Config) -> NotificationPolicy {
+    NotificationPolicy {
+        hostname: config.hostname.clone(),
+        local_domains: config.local_domains.clone(),
+        max_age_seconds: config.delivery.max_age_seconds,
+    }
+}
+
+async fn notify_failure(store: StoreClient, policy: NotificationPolicy) {
+    let task = match store.call(move |s| s.notification_next(&policy)).await {
+        Ok(NotificationWork::Prepare(task)) => task,
+        Ok(_) => return,
+        Err(_) => return, // Pending diagnostic/backoff is persisted when possible.
+    };
+    let id = task.delivery_id().to_owned();
+    let result = match task.prepare().await {
+        Ok(prepared) => store
+            .call(move |s| s.notification_commit(prepared))
+            .await
+            .map(|_| ()),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = result {
+        let _ = store
+            .call(move |s| s.notification_failed(&id, &error))
+            .await;
+        crate::log_event(
+            "notification_pending",
+            serde_json::json!({"retry":"bounded_backoff"}),
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -60,6 +95,9 @@ fn settings(c: &Config) -> SmtpSettings {
 }
 impl RelayClient {
     pub async fn load(config: &Config) -> io::Result<Self> {
+        notification_policy(config)
+            .validate()
+            .map_err(io::Error::other)?;
         Ok(Self(SmtpClient::load(&settings(config)).await?))
     }
     #[cfg(any(test, feature = "test-support"))]
@@ -121,6 +159,7 @@ pub(crate) async fn serve(
         jitter_percent: config.delivery.retry_jitter_percent,
     };
     let mut tasks = tokio::task::JoinSet::new();
+    let mut notices = tokio::task::JoinSet::new();
     let mut tick = tokio::time::interval(seconds(1));
     let mut claim_failure_logged = false;
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -130,7 +169,18 @@ pub(crate) async fn serve(
             joined=tasks.join_next(),if !tasks.is_empty()=> {
                 if joined.is_some_and(|r|r.is_err()) {crate::log_event("relay_task_failed",serde_json::json!({}));}
             },
-            _=tick.tick(),if tasks.len()<policy.concurrency=>{
+            joined=notices.join_next(),if !notices.is_empty()=> {
+                if joined.is_some_and(|r|r.is_err()) {crate::log_event("notification_task_failed",serde_json::json!({}));}
+            },
+            _=tick.tick()=>{
+                // Expiry is independent of network slots and the due cursor.
+                let limit=config.delivery.batch_size;
+                if store.call(move|s|s.queue_expire(limit)).await.is_err() {
+                    if !claim_failure_logged {crate::log_event("relay_lifecycle_unavailable",serde_json::json!({}));claim_failure_logged=true;}
+                    continue;
+                }
+                if notices.is_empty() {notices.spawn(notify_failure(store.clone(),notification_policy(&config)));}
+                if tasks.len()>=policy.concurrency {continue;}
                 let policy=policy.clone();let limit=config.delivery.batch_size;
                 let leases=store.call(move|s|s.queue_claim(&policy,limit)).await;
                 match leases {
@@ -151,12 +201,15 @@ pub(crate) async fn serve(
     // QueuedReader keeps the instance lock alive if a blocking read outlives abort.
     if timeout(seconds(config.timeouts.shutdown_grace_seconds), async {
         while tasks.join_next().await.is_some() {}
+        while notices.join_next().await.is_some() {}
     })
     .await
     .is_err()
     {
         tasks.abort_all();
+        notices.abort_all();
         while tasks.join_next().await.is_some() {}
+        while notices.join_next().await.is_some() {}
     }
 }
 

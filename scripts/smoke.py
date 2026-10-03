@@ -125,11 +125,17 @@ def main():
             # temporary store, after stopping the server. Preserve all mail rows.
             connection = sqlite3.connect(base / "mail/meta.sqlite")
             try:
-                connection.executescript("DROP INDEX queue_ready; DROP INDEX queue_recovery; DROP INDEX queue_list; DROP TABLE queue_lease; DROP TABLE queue_message; DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1;")
+                base_schema=(root/'crates/store/migrations/0001.sql').read_text(encoding='utf-8')
+                canonical=sqlite3.connect(':memory:')
+                canonical.executescript(base_schema)
+                columns=','.join(r[1] for r in canonical.execute('PRAGMA table_info(delivery)'))
+                canonical.close()
+                delivery_schema=base_schema[base_schema.index('CREATE TABLE delivery ('):base_schema.index('CREATE TABLE mailbox_message (')]
+                connection.executescript(f"BEGIN; CREATE TEMP TABLE legacy_delivery AS SELECT {columns} FROM delivery; DROP TABLE queue_admin_event; DROP TABLE delivery; {delivery_schema} INSERT INTO delivery SELECT * FROM legacy_delivery; DROP TABLE legacy_delivery; DROP TABLE queue_lease; DROP TABLE queue_message; DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1; COMMIT;")
             finally:
                 connection.close()
             migration = json.loads(run(control, "migrations").stdout)
-            assert migration["schema_version"] == 3 and migration["history"][0]["adopted"]
+            assert migration["schema_version"] == 4 and migration["history"][0]["adopted"]
             assert json.loads(run(control, "mail", "list", "alice@example.com").stdout) == stored
             orphan = base / "mail/blobs" / ("e" * 32 + ".eml")
             stale = base / "mail/staging" / ("f" * 32 + ".part")

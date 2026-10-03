@@ -158,7 +158,7 @@ impl Client {
         let response = self.command("EHLO test\r\n", 250).await;
         assert!(!response.contains("AUTH"));
         assert!(!response.contains("STARTTLS"));
-        assert!(!response.contains("PIPELINING"));
+        assert!(response.contains("PIPELINING"));
     }
     async fn envelope(&mut self) {
         self.command("MAIL FROM:<sender@remote.test>\r\n", 250)

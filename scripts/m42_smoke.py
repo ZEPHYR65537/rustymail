@@ -312,12 +312,19 @@ def main():
                     'fail@remote.test':'failed','lost@remote.test':'uncertain'}
         initial = lab.await_states(expected)
         assert all(row[2] == 1 for row in initial)
+        deadline = time.monotonic()+10
+        while True:
+            with closing(sqlite3.connect(lab.base/'mail/meta.sqlite')) as db:
+                if db.execute('SELECT count(*) FROM notification').fetchone()[0] == 1:
+                    break
+            assert time.monotonic() < deadline, 'missing failure report'
+            time.sleep(.1)
         lab.stop()
         # Inspect final stored bytes independently from the network peer.
         with closing(sqlite3.connect(lab.base/'mail/meta.sqlite')) as db:
-            message_id,blob_id = db.execute('SELECT id,blob_id FROM message').fetchone()
-            assert db.execute('SELECT count(*) FROM mailbox_message').fetchone()[0] == 1
-            assert db.execute('SELECT count(*) FROM blob').fetchone()[0] == 1
+            message_id,blob_id = db.execute("SELECT id,blob_id FROM message WHERE source='submission'").fetchone()
+            assert db.execute('SELECT count(*) FROM mailbox_message').fetchone()[0] == 2
+            assert db.execute('SELECT count(*) FROM blob').fetchone()[0] == 2  # Original plus one local DSN.
             assert db.execute('SELECT used_bytes FROM account WHERE login=?',('bob@example.com',)).fetchone()[0] > 0
         stored = (lab.base/'mail/blobs'/(blob_id+'.eml')).read_bytes()
         outbound = stored.split(b'\r\n',1)[1]
@@ -326,7 +333,7 @@ def main():
         transmitted = [r for r in lab.peer.records if r['body'] is not None]
         assert len(transmitted) == 3 and all(r['body'] == outbound for r in transmitted)
         assert all(r['auth_encrypted'] for r in transmitted)
-        assert lab.check_store(1)['queue_mismatches'] == 0
+        assert lab.check_store(2)['queue_mismatches'] == 0
         count = len(lab.peer.records)
         lab.restart()
         time.sleep(2.5)
@@ -340,7 +347,7 @@ def main():
         expected['defer@remote.test'] = 'delivered'
         retried = lab.await_states(expected)
         assert next(r[2] for r in retried if r[0]=='defer@remote.test') == 2
-        lab.check_store(1)
+        lab.check_store(2)
         assert 'disposable-relay-password' not in lab.log_path.read_text(encoding='utf-8')
         checks.append('R03: authenticated mixed submission; atomic local/remote responsibility; one blob; Bcc privacy; verified Return-Path projection')
         checks.append('R04: remote case preservation; durable delivered/deferred/failed/uncertain; restart does not resend; explicit retry only sends the selected recipient')

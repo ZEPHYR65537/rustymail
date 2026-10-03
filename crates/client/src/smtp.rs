@@ -63,6 +63,7 @@ pub struct Message {
 
 #[derive(Default)]
 struct Capabilities {
+    pipelining: bool,
     starttls: bool,
     eight_bit: bool,
     plain: bool,
@@ -317,25 +318,32 @@ impl SmtpClient {
             });
         }
         mail.push_str("\r\n");
-        let code = self.command(&mut wire, &mail, false).await?.code;
-        if !(200..300).contains(&code) {
-            return rejected(code);
-        }
-        let code = self
-            .command(
-                &mut wire,
-                &format!("RCPT TO:<{}>\r\n", message.recipient.as_str()),
-                false,
-            )
-            .await?
-            .code;
-        if !(200..300).contains(&code) {
-            return rejected(code);
-        }
-        write(&mut wire, b"DATA\r\n", self.limits.command_timeout_seconds).await?;
-        let code = response(&mut wire, self.limits.data_command_timeout_seconds, false)
-            .await?
-            .code;
+        let rcpt = format!("RCPT TO:<{}>\r\n", message.recipient.as_str());
+        let code = if ehlo.capabilities.pipelining {
+            let codes = self
+                .envelope_pipeline(&mut wire, &format!("{mail}{rcpt}DATA\r\n"))
+                .await?;
+            // Correlate by command POSITION, never by the text or status value.
+            // A failure closes this one-use socket, including a stray 354 after
+            // a rejected MAIL/RCPT; no empty or real message is committed.
+            for code in &codes[..2] {
+                if !(200..300).contains(code) {
+                    return rejected(*code);
+                }
+            }
+            codes[2]
+        } else {
+            for command in [&mail, &rcpt] {
+                let code = self.command(&mut wire, command, false).await?.code;
+                if !(200..300).contains(&code) {
+                    return rejected(code);
+                }
+            }
+            write(&mut wire, b"DATA\r\n", self.limits.command_timeout_seconds).await?;
+            response(&mut wire, self.limits.data_command_timeout_seconds, false)
+                .await?
+                .code
+        };
         if code != 354 {
             return rejected(code);
         }
@@ -357,6 +365,50 @@ impl SmtpClient {
         } else {
             rejected(code)
         }
+    }
+
+    async fn envelope_pipeline(
+        &self,
+        wire: &mut Wire,
+        commands: &str,
+    ) -> Result<[u16; 3], Failure> {
+        let codes = {
+            // Drain replies while writing, so a small TCP window cannot deadlock
+            // a command group against a server already producing responses.
+            let (read, mut output) = tokio::io::split(&mut *wire);
+            let mut input = BufReader::with_capacity(4096, read);
+            let receive = async {
+                let mut codes = [0; 3];
+                for (index, code) in codes.iter_mut().enumerate() {
+                    let deadline = if index == 2 {
+                        self.limits.data_command_timeout_seconds
+                    } else {
+                        self.limits.command_timeout_seconds
+                    };
+                    *code = response(&mut input, deadline, false).await?.code;
+                    if *code == 421 {
+                        break;
+                    }
+                }
+                if !input.buffer().is_empty() {
+                    return Err(io::Error::other("unexpected pipeline response"));
+                }
+                Ok::<_, io::Error>(codes)
+            };
+            let (_, codes) = tokio::try_join!(
+                write(
+                    &mut output,
+                    commands.as_bytes(),
+                    self.limits.command_timeout_seconds
+                ),
+                receive
+            )?;
+            codes
+        };
+        if !wire.buffer().is_empty() {
+            return Err(Failure::Setup);
+        }
+        Ok(codes)
     }
 
     async fn command(&self, wire: &mut Wire, command: &str, capture: bool) -> io::Result<Response> {
@@ -459,7 +511,7 @@ fn rejected(code: u16) -> Result<AttemptResult, Failure> {
         _ => Err(Failure::Connection),
     }
 }
-async fn write(wire: &mut Wire, bytes: &[u8], deadline: u64) -> io::Result<()> {
+async fn write<W: AsyncWrite + Unpin>(wire: &mut W, bytes: &[u8], deadline: u64) -> io::Result<()> {
     timeout(seconds(deadline), async {
         wire.write_all(bytes).await?;
         wire.flush().await
@@ -467,7 +519,11 @@ async fn write(wire: &mut Wire, bytes: &[u8], deadline: u64) -> io::Result<()> {
     .await
     .map_err(|_| crate::timed_out())?
 }
-async fn response(wire: &mut Wire, deadline: u64, capture: bool) -> io::Result<Response> {
+async fn response<R: AsyncRead + Unpin>(
+    wire: &mut BufReader<R>,
+    deadline: u64,
+    capture: bool,
+) -> io::Result<Response> {
     timeout(seconds(deadline), async {
         let invalid = || {
             io::Error::new(
@@ -505,6 +561,7 @@ async fn response(wire: &mut Wire, deadline: u64, capture: bool) -> io::Result<R
                     .map_err(|_| invalid())?;
                 let mut words = text.split_ascii_whitespace();
                 match words.next().unwrap_or("").to_ascii_uppercase().as_str() {
+                    "PIPELINING" => capabilities.pipelining = true,
                     "STARTTLS" => capabilities.starttls = true,
                     "8BITMIME" => capabilities.eight_bit = true,
                     "AUTH" => capabilities.plain = words.any(|s| s.eq_ignore_ascii_case("PLAIN")),

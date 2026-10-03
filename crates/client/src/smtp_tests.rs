@@ -55,3 +55,61 @@ async fn fragmented_body_preserves_projection_transparency_and_fixed_reads() {
         );
     }
 }
+
+#[tokio::test]
+async fn pipeline_drains_replies_while_commands_are_partially_written() {
+    use tokio::io::AsyncBufReadExt;
+    // Capacity one forces partial writes in both directions. The peer sends
+    // its first reply before reading RCPT; write-all-then-read would deadlock.
+    let (stream, peer) = tokio::io::duplex(1);
+    let mut wire: Wire = BufReader::new(Box::new(stream));
+    let client = SmtpClient::plaintext_lab("127.0.0.1:1".parse().unwrap(), &config()).unwrap();
+    let server = async {
+        let mut peer = BufReader::with_capacity(1, peer);
+        for (command, reply) in [
+            ("MAIL FROM:<>\r\n", "250 sender\r\n"),
+            ("RCPT TO:<target@remote.test>\r\n", "250 recipient\r\n"),
+            ("DATA\r\n", "354 body\r\n"),
+        ] {
+            let mut line = String::new();
+            peer.read_line(&mut line).await.unwrap();
+            assert_eq!(line, command);
+            peer.write_all(reply.as_bytes()).await.unwrap();
+        }
+    };
+    let exchange = async {
+        let (codes, ()) = tokio::join!(
+            client.envelope_pipeline(
+                &mut wire,
+                "MAIL FROM:<>\r\nRCPT TO:<target@remote.test>\r\nDATA\r\n"
+            ),
+            server
+        );
+        assert_eq!(codes.ok(), Some([250, 250, 354]));
+    };
+    timeout(Duration::from_secs(2), exchange).await.unwrap();
+}
+
+#[tokio::test]
+async fn cancelling_a_partial_pipeline_closes_the_owned_connection() {
+    let (stream, mut peer) = tokio::io::duplex(1);
+    let client = SmtpClient::plaintext_lab("127.0.0.1:1".parse().unwrap(), &config()).unwrap();
+    let commands = b"MAIL FROM:<>\r\nRCPT TO:<target@remote.test>\r\nDATA\r\n";
+    let attempt = tokio::spawn(async move {
+        let mut wire: Wire = BufReader::new(Box::new(stream));
+        client
+            .envelope_pipeline(&mut wire, std::str::from_utf8(commands).unwrap())
+            .await
+            .ok()
+    });
+    assert_eq!(peer.read_u8().await.unwrap(), b'M');
+    attempt.abort();
+    assert!(attempt.await.unwrap_err().is_cancelled());
+    let mut partial = vec![b'M'];
+    timeout(Duration::from_secs(2), peer.read_to_end(&mut partial))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(commands.starts_with(&partial));
+    assert!(partial.len() < commands.len());
+}

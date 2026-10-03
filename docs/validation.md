@@ -16,6 +16,8 @@
 
 0.9.0 的统一入口与独立 SMTP 提交见 [CLI 报告](../reports/cli/validation.md)。
 
+0.10.0 的失败生命周期、DSN、PIPELINING 与通知故障实验见 [M4.3 报告](../reports/m4.3/validation.md)。
+
 ## 检查项
 
 | 检查 | 当前结果 |

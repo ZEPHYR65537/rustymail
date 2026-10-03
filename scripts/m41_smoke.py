@@ -86,7 +86,7 @@ def main():
         assert result['queue_mismatches'] == 0
         # This experiment owns an idle, disposable store; inspect independently.
         with closing(sqlite3.connect(root/'meta.sqlite')) as connection:
-            assert connection.execute('PRAGMA user_version').fetchone()[0] == 3
+            assert connection.execute('PRAGMA user_version').fetchone()[0] == 4
             assert connection.execute('PRAGMA foreign_key_check').fetchall() == []
             assert connection.execute('SELECT count(*) FROM message').fetchone()[0] == 1
             assert connection.execute('SELECT count(*) FROM mailbox_message').fetchone()[0] == 0

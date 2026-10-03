@@ -314,7 +314,7 @@ async fn queue_transactions_recover_before_and_after_commit_without_false_succes
 }
 
 #[tokio::test]
-async fn expired_tasks_hold_and_clock_steps_stop_claims_without_losing_known_results() {
+async fn expired_tasks_fail_and_clock_steps_stop_claims_without_losing_known_results() {
     let dir = tempfile::tempdir().unwrap();
     let clock = TestClock::new();
     let mut store = Store::open_with_runtime(
@@ -349,10 +349,10 @@ async fn expired_tasks_hold_and_clock_steps_stop_claims_without_losing_known_res
         .queue_list("", 128)
         .unwrap()
         .into_iter()
-        .find(|r| r.state == "hold")
+        .find(|r| r.state == "failed")
         .unwrap();
     assert!(store.queue_retry(&row.id, true, false).is_err());
-    store.queue_retry(&row.id, true, true).unwrap();
+    assert!(store.queue_retry(&row.id, true, true).is_err());
     clock.wall.fetch_sub(1, Ordering::SeqCst);
     assert!(matches!(
         store.queue_claim(&policy(), 1),
@@ -427,7 +427,7 @@ async fn version_two_upgrade_is_atomic_and_preserves_existing_local_mail() {
                 },
             )
             .unwrap();
-        store.connection.execute_batch("DROP INDEX queue_ready; DROP INDEX queue_recovery; DROP INDEX queue_list; DROP TABLE queue_lease; DROP TABLE queue_message; DELETE FROM schema_migration WHERE version=3; PRAGMA user_version=2;").unwrap();
+        crate::legacy_lab_fixture(&mut store.connection, 2).unwrap();
         assert_eq!(crate::migration::validate(&store.connection).unwrap(), 2);
         drop(store);
         let runtime = StorageRuntime::default().with_hook(move |point| {
@@ -444,7 +444,7 @@ async fn version_two_upgrade_is_atomic_and_preserves_existing_local_mail() {
             if boundary == FaultPoint::MigrationApplied {
                 2
             } else {
-                3
+                crate::CURRENT_VERSION
             }
         );
         drop(connection);
@@ -453,7 +453,10 @@ async fn version_two_upgrade_is_atomic_and_preserves_existing_local_mail() {
         assert_eq!(messages[0].uid, 1);
         assert_eq!(messages[0].message_id, accepted.message_id);
         assert!(store.check_integrity().unwrap().healthy());
-        assert_eq!(store.migration_history().unwrap().len(), 3);
+        assert_eq!(
+            store.migration_history().unwrap().len(),
+            crate::CURRENT_VERSION as usize
+        );
     }
 }
 

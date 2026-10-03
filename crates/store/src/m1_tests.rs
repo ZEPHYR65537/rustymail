@@ -361,8 +361,8 @@ async fn recovery_accepts_only_a_matching_copy_and_never_overwrites() {
 }
 
 fn legacy(root: &Path) {
-    let store = Store::open(root, options()).unwrap();
-    store.connection.execute_batch("DROP INDEX queue_ready; DROP INDEX queue_recovery; DROP INDEX queue_list; DROP TABLE queue_lease; DROP TABLE queue_message; DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1;").unwrap();
+    let mut store = Store::open(root, options()).unwrap();
+    crate::legacy_lab_fixture(&mut store.connection, 1).unwrap();
 }
 
 #[test]
