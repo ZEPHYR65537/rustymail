@@ -12,14 +12,6 @@ test-support = ["rustymail-store/test-support", "rustymail-client/test-support"]
 name = "rustymail"
 path = "src/bin/rustymail.rs"
 
-[[bin]]
-name = "rustymaild"
-path = "src/bin/rustymaild.rs"
-
-[[bin]]
-name = "rustymailctl"
-path = "src/bin/rustymailctl.rs"
-
 [dependencies]
 rustymail-core.workspace = true
 rustymail-protocol.workspace = true

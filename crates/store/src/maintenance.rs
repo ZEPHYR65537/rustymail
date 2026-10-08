@@ -1,5 +1,5 @@
 use crate::blob::{reject_symlink, sync_directory, valid_id};
-use crate::{FaultPoint, MigrationRecord, Store, StoreError, migration, unsigned_column};
+use crate::{FaultPoint, Store, StoreError, unsigned_column};
 use rusqlite::{OptionalExtension, params};
 use serde::Serialize;
 use std::{fs, time::UNIX_EPOCH};
@@ -75,10 +75,6 @@ impl Store {
             return Err(StoreError::MaintenanceBusy);
         }
         Ok(())
-    }
-
-    pub fn migration_history(&self) -> Result<Vec<MigrationRecord>, StoreError> {
-        migration::history(&self.connection)
     }
 
     pub fn operation(&self, id: &str) -> Result<Option<OperationSummary>, StoreError> {

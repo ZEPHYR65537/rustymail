@@ -30,22 +30,20 @@ for name in ["rustymail.example.toml", "rustymail.lab.toml", "rustymail.tls-lab.
     assert config["delivery"]["mode"] == ("relay" if relay else "disabled")
     if relay:
         assert config["relay"]["host"] == "localhost" and config["relay"]["ca_file"]
-    assert config["store"]["synchronous"] == "full"
+    assert config["store"]["writer_queue"] > 0
     assert all(v.startswith("127.0.0.1:") for v in config["listeners"].values())
 
 client = tomllib.loads((root/'deploy/rustymail.client.example.toml').read_text(encoding='utf-8'))
-assert client['schema_version'] == 1 and client['smtp']['security'] == 'starttls'
+assert client['smtp']['security'] == 'starttls'
 assert client['smtp']['ca_file'] and client['smtp']['password_file']
 assert 'password' not in client['smtp'] and 'data_dir' not in client
 
 with tempfile.TemporaryDirectory(prefix="rustymail-docs-") as temporary:
     connection = sqlite3.connect(Path(temporary) / "schema.sqlite")
     try:
-        connection.executescript((root / "docs/examples/schema.sql").read_text(encoding="utf-8"))
+        connection.executescript((root / "crates/store/schema.sql").read_text(encoding="utf-8"))
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-        assert connection.execute("PRAGMA synchronous").fetchone()[0] == 2
     finally:
         connection.close()
 print(json.dumps({"markdown_files": len(files), "local_links": links, "toml": "passed", "schema": "passed"}))

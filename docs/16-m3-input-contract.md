@@ -49,7 +49,7 @@ SIZE 是声明，不是接下来必须读取的长度。`SIZE=1` 不应让接收
 
 ## 3. 能力公布必须跟随会话状态
 
-下表描述 `serve-lab-smtp` 三入口。所有行都有 `SIZE`、`8BITMIME` 和 `ENHANCEDSTATUSCODES`；SIZE 的值来自当前配置。
+下表描述 `serve --mode lab-smtp` 三入口。所有行都有 `SIZE`、`8BITMIME` 和 `ENHANCEDSTATUSCODES`；SIZE 的值来自当前配置。
 
 | 入口和状态 | 额外 EHLO 能力 | MAIL / RCPT 的权限 |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ SIZE 是声明，不是接下来必须读取的长度。`SIZE=1` 不应让接收
 | implicit submission、未认证 | AUTH PLAIN | 与上行相同，从首字节即 TLS |
 | 两种提交入口、已认证 | 无 | MAIL 发件人必须通过 send-as；空路径不允许；M3 仍只交付本地账号 |
 
-旧的 `serve-lab` 没有 TLS 配置，不公布 STARTTLS。新的 EHLO/HELO 清空信封，但不撤销已完成的认证。STARTTLS 后新建会话状态，必须重新 EHLO；AUTH 仅在 EHLO 后且不在 MAIL 事务中可用。明文提交入口允许 EHLO、HELO、RSET、NOOP、HELP、VRFY、QUIT 这些不提交邮件的命令。
+旧的 `serve --mode lab` 没有 TLS 配置，不公布 STARTTLS。新的 EHLO/HELO 清空信封，但不撤销已完成的认证。STARTTLS 后新建会话状态，必须重新 EHLO；AUTH 仅在 EHLO 后且不在 MAIL 事务中可用。明文提交入口允许 EHLO、HELO、RSET、NOOP、HELP、VRFY、QUIT 这些不提交邮件的命令。
 
 HELP 返回简短命令说明，不承诺当前入口或状态允许执行每个命令。VRFY 对存在和不存在的名字都返回 `252 2.5.2`，不访问账号数据库。它不能证明 RCPT 无账号枚举：收信端为了拒绝无效收件人仍会暴露可投递性，限流和公网反滥用属于后续阶段。
 

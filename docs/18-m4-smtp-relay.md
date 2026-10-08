@@ -130,7 +130,7 @@ cargo build -p rustymail-server --example m42_attempt --features test-support --
 python scripts/relay_stream.py
 ```
 
-[中继实验模板](../deploy/rustymail.relay-lab.toml)使用显式 `delivery.mode="relay"`。运行 `serve-lab-relay` 才会启用后台发送；旧三个启动命令要求 disabled，避免仅改配置就改变已有入口行为。模板将上游指向 localhost:3465，仅供自己启动的验证对端；没有随服务提供自动接受邮件的公开上游。
+[中继实验模板](../deploy/rustymail.relay-lab.toml)使用显式 `delivery.mode="relay"`。运行 `serve --mode lab-relay` 才会启用后台发送；旧三个启动命令要求 disabled，避免仅改配置就改变已有入口行为。模板将上游指向 localhost:3465，仅供自己启动的验证对端；没有随服务提供自动接受邮件的公开上游。
 
 ```toml
 [relay]
@@ -145,8 +145,8 @@ password_file = "data/lab-secrets/relay-password"
 手动运行前，按 [M2 手册](12-m2-identity.md)生成实验服务证书、创建账户及应用密码，配置上述对端，并核对模板里的数据路径。若上游要求认证，再填写用户名与私有密码文件。结构检查不会连接上游、核对证书文件或保证服务可启动：
 
 ```sh
-target/debug/rustymaild --config deploy/rustymail.relay-lab.toml check
-target/debug/rustymaild --config deploy/rustymail.relay-lab.toml serve-lab-relay
+target/debug/rustymail check --config deploy/rustymail.relay-lab.toml
+target/debug/rustymail serve --mode lab-relay --config deploy/rustymail.relay-lab.toml
 ```
 
 服务停止后使用相同配置执行 `queue list`、`queue hold`、`queue retry`、`check-store`。在线队列管理尚未接入 Unix 管理协议，不能绕过独占锁另开 CLI 写库。配置改变后下一次启动会重新加载上游；原有任务不会因重启而被批量重置。

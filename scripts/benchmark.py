@@ -54,14 +54,14 @@ def main():
             config = config.replace("shutdown_grace_seconds = 60", "shutdown_grace_seconds = 2")
             config_path = base / "lab.toml"
             config_path.write_text(config)
-            control = [str(binaries / "rustymailctl"), "--config", str(config_path)]
+            control = [str(binaries / "rustymail"), "admin", "--config", str(config_path)]
             subprocess.run(control + ["account", "add", "alice@example.com"], check=True, capture_output=True)
             header = b"From: sender@remote.test\r\nTo: alice@example.com\r\nSubject: bounded baseline\r\n\r\n"
             line = b"x" * 78 + b"\r\n"
             raw = header + line * ((requested_size - len(header)) // len(line))
             with (base / "server.log").open("wb") as log:
-                process = subprocess.Popen(["taskset", "-c", ",".join(map(str, cpus)), str(binaries / "rustymaild"),
-                                            "--config", str(config_path), "serve-lab"], stdout=subprocess.DEVNULL, stderr=log)
+                process = subprocess.Popen(["taskset", "-c", ",".join(map(str, cpus)), str(binaries / "rustymail"), "serve",
+                                            "--config", str(config_path), "--mode", "lab"], stdout=subprocess.DEVNULL, stderr=log)
                 try:
                     deadline = time.monotonic() + 20
                     while True:

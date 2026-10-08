@@ -139,8 +139,8 @@ async fn gc_is_bounded_audited_and_preserves_all_retention_roots() {
     store
         .connection
         .execute(
-            "INSERT INTO blob VALUES(?1,?2,?3,?4,1,1)",
-            params![extra.id, extra.size as i64, extra.hash, b"{}".as_slice()],
+            "INSERT INTO blob VALUES(?1,?2,?3,1)",
+            params![extra.id, extra.size as i64, extra.hash],
         )
         .unwrap();
     store
@@ -358,75 +358,6 @@ async fn recovery_accepts_only_a_matching_copy_and_never_overwrites() {
         store.recover_blob("../../escape", &source),
         Err(StoreError::InvalidId)
     ));
-}
-
-fn legacy(root: &Path) {
-    let mut store = Store::open(root, options()).unwrap();
-    crate::legacy_lab_fixture(&mut store.connection, 1).unwrap();
-}
-
-#[test]
-fn migration_is_atomic_adopts_only_the_exact_legacy_schema_and_checks_history() {
-    for point in [FaultPoint::MigrationApplied, FaultPoint::MigrationCommitted] {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().join("mail");
-        legacy(&root);
-        let runtime = StorageRuntime::default().with_hook(move |at| {
-            if at == point {
-                Err(io::Error::other("interrupted migration"))
-            } else {
-                Ok(())
-            }
-        });
-        assert!(Store::open_with_runtime(&root, options(), runtime).is_err());
-        {
-            let connection = Connection::open(root.join("meta.sqlite")).unwrap();
-            let version: u32 = connection
-                .pragma_query_value(None, "user_version", |r| r.get(0))
-                .unwrap();
-            assert_eq!(
-                version,
-                if point == FaultPoint::MigrationApplied {
-                    1
-                } else {
-                    CURRENT_VERSION
-                }
-            );
-            assert_eq!(migration::validate(&connection).unwrap(), version);
-        }
-        let store = Store::open_existing(&root, options()).unwrap();
-        let history = store.migration_history().unwrap();
-        assert_eq!(history.len(), CURRENT_VERSION as usize);
-        assert!(history[0].adopted);
-        assert!(!history[1].adopted);
-        store
-            .connection
-            .execute(
-                "UPDATE schema_migration SET sha256=?1 WHERE version=1",
-                ["0".repeat(64)],
-            )
-            .unwrap();
-        drop(store);
-        assert!(matches!(
-            Store::open_existing(&root, options()),
-            Err(StoreError::SchemaVersion)
-        ));
-    }
-    for statement in [
-        "CREATE TABLE unrelated(id INTEGER)",
-        "CREATE TABLE sqliteXextra(id INTEGER)",
-    ] {
-        let directory = tempfile::tempdir().unwrap();
-        let root = directory.path().join("mail");
-        legacy(&root);
-        let connection = Connection::open(root.join("meta.sqlite")).unwrap();
-        connection.execute(statement, []).unwrap();
-        drop(connection);
-        assert!(matches!(
-            Store::open_existing(&root, options()),
-            Err(StoreError::SchemaVersion)
-        ));
-    }
 }
 
 #[test]

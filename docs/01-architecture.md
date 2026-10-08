@@ -22,11 +22,11 @@ flowchart LR
 
 图表达逻辑关系；实际收 DATA 时先把原文流式写入暂存文件，再由扫描组件从文件读取，最后提交。不能为了符合图的布局把邮件全部装进 `Vec<u8>`。
 
-主服务 `rustymaild` 管理网络、调度和存储；管理工具 `rustymailctl` 通过本地 Unix socket 请求管理动作。MIME 解析计划采用受限工作进程 `rustymail-worker` 隔离不可预测的输入开销；第三方 Rspamd 独立运行。M2 的 SASL 输入有严格长度上限，Argon2 参数预检后在进程内的有界 blocking 任务运行，见 [M2 教程](12-m2-identity.md)与 ADR 011。MIME worker 的隔离验证仍待 M0 完成。
+`rustymail serve` 管理网络、调度和存储；`rustymail admin` 通过本地 Unix socket 请求在线管理动作。MIME 解析计划采用受限工作进程 `rustymail-worker` 隔离不可预测的输入开销；第三方 Rspamd 独立运行。M2 的 SASL 输入有严格长度上限，Argon2 参数预检后在进程内的有界 blocking 任务运行，见 [M2 教程](12-m2-identity.md)与 ADR 011。MIME worker 的隔离验证仍待 M0 完成。
 
 主服务只支持单实例写入同一数据目录。启动持有目录锁；第二个实例拒绝启动。CLI 不绕过主服务并发修改数据库，离线修复必须先停止服务。
 
-0.9.0 新增统一入口：`rustymail serve`、`rustymail admin` 分别复用原守护进程和管理代码，旧程序名仍保留；`rustymail send` 使用独立配置和 SMTP/TLS 客户端库，不打开服务器数据目录。当前实际 workspace 为 core、protocol、store、client、server；下方树是完整目标的模块蓝图。共享传输只负责一次网络尝试，队列持久责任由 server/store 保存，CLI 快照只服务于本次命令。实现和实验见[统一 CLI 教程](21-unified-cli.md)。
+0.9.0 新增统一入口；开发阶段精简后只构建 `rustymail`，旧程序包装已移除。`rustymail send` 使用独立配置和 SMTP/TLS 客户端库，不打开服务器数据目录。当前实际 workspace 为 core、protocol、store、client、server；下方树是完整目标的模块蓝图。共享传输只负责一次网络尝试，队列持久责任由 server/store 保存，CLI 快照只服务于本次命令。实现和实验见[统一 CLI 教程](21-unified-cli.md)。
 
 ## 2. 建议的 Cargo workspace
 
@@ -34,7 +34,7 @@ flowchart LR
 crates/
   core/         标识符、信封、权限上下文、错误类型、配置单位
   protocol/     有界 framing、SMTP/IMAP codec 适配、纯状态转换
-  store/        blob 生命周期、SQLite 线程、迁移、配额、恢复
+  store/        blob 生命周期、SQLite 线程、结构校验、配额、恢复
   auth/         Argon2id、应用密码、撤销、授权发件人
   policy/       mail-auth、Rspamd、资源预算、策略结果
   smtp/         25/465/587 服务端会话
@@ -42,8 +42,7 @@ crates/
   imap/         邮箱状态、UID/序号视图、FETCH/STORE/APPEND
   admin/        本地管理 API、审计、只读指标
 bins/
-  rustymaild/
-  rustymailctl/
+  rustymail/      serve / send / admin / check
   rustymail-worker/
 tests/          独立客户端、持久化故障、跨模块负例
 fuzz/           parser、状态机、边界切片的 fuzz targets

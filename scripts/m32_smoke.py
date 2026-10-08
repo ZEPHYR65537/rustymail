@@ -40,7 +40,7 @@ def main():
             config = re.sub(r'^'+key+r' = .*$', lambda _:f'{key} = {json.dumps(value)}', config, flags=re.M)
         config_path = base/'server.toml'
         config_path.write_text(config, encoding='utf-8')
-        control = [str(binaries/('rustymailctl'+suffix)), '--config', str(config_path)]
+        control = [str(binaries/('rustymail'+suffix)), 'admin', '--config', str(config_path)]
 
         def ctl(*command):
             result = subprocess.run(control+list(command), capture_output=True, text=True,
@@ -54,7 +54,7 @@ def main():
         expected = {}
         log_path = base/'server.log'
         with log_path.open('wb') as log:
-            process = subprocess.Popen([str(binaries/('rustymaild'+suffix)), '--config', str(config_path), 'serve-lab'],
+            process = subprocess.Popen([str(binaries/('rustymail'+suffix)), 'serve', '--config', str(config_path), '--mode', 'lab'],
                                        stdout=subprocess.DEVNULL, stderr=log, **hidden)
             try:
                 deadline = time.monotonic() + 20

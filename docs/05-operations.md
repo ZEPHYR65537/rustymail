@@ -1,10 +1,10 @@
 # 部署、运维与故障处置
 
-0.10.0 运维增量：数据库升级到 schema 4，失败通知、配额调整、queue show/maintain/history/close-unknown 的可执行操作及备份/降级边界见[M4.3 手册](22-m43-delivery-lifecycle.md)。这些队列命令当前需要停机取得独占锁；生产服务门槛保持不变。
+当前运维入口见[M4.3 手册](22-m43-delivery-lifecycle.md)：失败通知、配额调整、queue show/maintain/history/close-unknown。这些队列命令需要停机取得独占锁。开发阶段只维护一份当前结构，旧实验库不自动升级，格式不兼容时拒绝打开并保留内容；数据保留步骤及配置精简见[第 23 章](23-simplicity-and-invariants.md)。
 
 > 状态：这是生产服务的目标操作契约。当前 L0 已有存储维护、身份/TLS、本地管理、三入口 STARTTLS 和离线队列实验；实际命令以 [M1 教程](11-m1-storage.md)、[M2 教程](12-m2-identity.md)、[M3.1 教程](14-m3-starttls.md)、[M4.1 队列手册](17-m4-durable-queue.md)和 `--help` 为准。0.8.0 的固定上游发送另见 [M4.2 实验手册](18-m4-smtp-relay.md)。下文生产服务、完整备份与直接 MX 等仍待实现，不能直接照做部署。DNS / OpenSSL 检查可以在已有环境使用，但 example.com、192.0.2.10、密钥和账号均为占位符。
 
-0.5.0 新增最终本地交付头部。导出与精确副本恢复针对完整的最终存储文件，不能用客户端提交内容替代；自定义临时预算至少要容纳客户端单封上限加 2 KiB，详见 [M3.2 教程](15-m3-local-delivery.md)。0.7.0 使用 schema 3，新增队列表与索引，历史 blob 不重写；升级/回滚边界见 M4.1 手册。
+导出与精确副本恢复针对完整的最终存储文件，不能用客户端提交内容替代；自定义临时预算至少要容纳客户端单封上限加 2 KiB，详见 [M3.2 教程](15-m3-local-delivery.md)。早期 schema 1–4 的升级实验只保留在 Git 和历史报告中。
 
 ## 1. 部署前的现实条件
 
@@ -85,11 +85,11 @@ M0 后的构建流程要求：从已审查的发布 tag 构建，锁定 Rust 工
 
 ```sh
 # 以下命令尚未实现；M0–M7 必须使它们与文档一致。
-rustymaild --config /etc/rustymail/server.toml check
-rustymailctl --socket /run/rustymail/admin.sock status
-rustymailctl --socket /run/rustymail/admin.sock account add alice@example.com --quota-bytes 1073741824
-rustymailctl --socket /run/rustymail/admin.sock credential create alice@example.com --label emacs
-rustymailctl --socket /run/rustymail/admin.sock queue list --state deferred --limit 50
+rustymail check --config /etc/rustymail/server.toml
+rustymail admin --config /etc/rustymail/server.toml --socket /run/rustymail/admin.sock status
+rustymail admin --config /etc/rustymail/server.toml --socket /run/rustymail/admin.sock account add alice@example.com --quota-bytes 1073741824
+rustymail admin --config /etc/rustymail/server.toml --socket /run/rustymail/admin.sock credential create alice@example.com --label emacs
+rustymail admin --config /etc/rustymail/server.toml --socket /run/rustymail/admin.sock queue list --state deferred --limit 50
 ```
 
 应用密码由管理工具在本机交互终端一次性显示；不能把密码作为 `--password` 参数保存进 shell 历史。CLI 大量列表默认分页，导出需显式指定输出文件和权限。

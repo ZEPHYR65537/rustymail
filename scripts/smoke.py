@@ -14,7 +14,6 @@ import re
 import smtplib
 import socket
 import subprocess
-import sqlite3
 import tempfile
 import time
 from delivery_assertions import delivery_content
@@ -27,9 +26,9 @@ def main():
     root = Path(__file__).resolve().parents[1]
     binaries = Path(args.bin_dir).resolve()
     suffix = ".exe" if __import__("os").name == "nt" else ""
-    daemon = binaries / f"rustymaild{suffix}"
-    control = binaries / f"rustymailctl{suffix}"
-    assert daemon.is_file() and control.is_file(), "Run cargo build --workspace --locked first"
+    executable = binaries / f"rustymail{suffix}"
+    daemon, control = "server", "admin"
+    assert executable.is_file(), "Run cargo build --workspace --locked first"
     with tempfile.TemporaryDirectory(prefix="rustymail-smoke-") as temporary:
         base = Path(temporary).resolve()
         with socket.socket() as reservation:
@@ -46,7 +45,9 @@ def main():
         hidden = {"creationflags": subprocess.CREATE_NO_WINDOW} if suffix else {}
 
         def run(binary, *command, success=True):
-            result = subprocess.run([str(binary), "--config", str(config_path), *command],
+            arguments = (["admin", "--config", str(config_path), *command] if binary == control
+                         else [command[0], "--config", str(config_path), *command[1:]])
+            result = subprocess.run([str(executable), *arguments],
                                     capture_output=True, text=True, encoding="utf-8", timeout=30, **hidden)
             assert (result.returncode == 0) == success, (command, result.stdout, result.stderr)
             return result
@@ -60,7 +61,7 @@ def main():
         log_path = base / "server.log"
 
         def start(log):
-            process = subprocess.Popen([str(daemon), "--config", str(config_path), "serve-lab"],
+            process = subprocess.Popen([str(executable), "serve", "--config", str(config_path), "--mode", "lab"],
                                        stdout=subprocess.DEVNULL, stderr=log, **hidden)
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
@@ -121,21 +122,7 @@ def main():
             operation = json.loads(run(control, "operation", accepted["operation_id"]).stdout)["operation"]
             assert trace_id == accepted["operation_id"]
             assert operation["message_id"] == stored["message_id"]
-            # Construct a legacy-schema fixture only inside this script's fresh
-            # temporary store, after stopping the server. Preserve all mail rows.
-            connection = sqlite3.connect(base / "mail/meta.sqlite")
-            try:
-                base_schema=(root/'crates/store/migrations/0001.sql').read_text(encoding='utf-8')
-                canonical=sqlite3.connect(':memory:')
-                canonical.executescript(base_schema)
-                columns=','.join(r[1] for r in canonical.execute('PRAGMA table_info(delivery)'))
-                canonical.close()
-                delivery_schema=base_schema[base_schema.index('CREATE TABLE delivery ('):base_schema.index('CREATE TABLE mailbox_message (')]
-                connection.executescript(f"BEGIN; CREATE TEMP TABLE legacy_delivery AS SELECT {columns} FROM delivery; DROP TABLE queue_admin_event; DROP TABLE delivery; {delivery_schema} INSERT INTO delivery SELECT * FROM legacy_delivery; DROP TABLE legacy_delivery; DROP TABLE queue_lease; DROP TABLE queue_message; DROP TABLE gc_action; DROP TABLE maintenance_run; DROP TABLE schema_migration; PRAGMA user_version=1; COMMIT;")
-            finally:
-                connection.close()
-            migration = json.loads(run(control, "migrations").stdout)
-            assert migration["schema_version"] == 4 and migration["history"][0]["adopted"]
+            # Reopening the current store preserves all accepted mail.
             assert json.loads(run(control, "mail", "list", "alice@example.com").stdout) == stored
             orphan = base / "mail/blobs" / ("e" * 32 + ".eml")
             stale = base / "mail/staging" / ("f" * 32 + ".part")
@@ -190,7 +177,7 @@ def main():
                 "strict CLI configuration", "production entry refused", "receive-only account",
                 "SMTP capability truthfulness", "relay denied", "SMTP final-250 acceptance",
                 "forced process termination", "byte-exact recovery/export", "no export overwrite",
-                "exclusive admin lock", "server restart", "operation lookup", "legacy schema adoption",
+                "exclusive admin lock", "server restart", "operation lookup", "current schema reopen",
                 "GC preview and audited apply", "verified export rejects corruption/truncation/growth and cleans output",
                 "verified missing-blob recovery", "no recovery overwrite", "offline checkpoint"
             ]}, indent=2))

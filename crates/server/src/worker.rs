@@ -110,16 +110,16 @@ impl StoreWorker {
 
 impl StoreClient {
     #[cfg(unix)]
-    pub async fn change_authority(
+    pub async fn change_authority<T: Send + 'static>(
         &self,
         changes: tokio::sync::watch::Sender<u64>,
-        change: impl FnOnce(&mut Store) -> Result<i64, StoreError> + Send + 'static,
-    ) -> Result<i64, StoreError> {
+        change: impl FnOnce(&mut Store) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<T, StoreError> {
         self.call(move |store| {
-            let id = change(store)?;
+            let result = change(store)?;
             // Publish in the owner, even when the request's reply was cancelled.
             changes.send_modify(|version| *version = version.wrapping_add(1));
-            Ok(id)
+            Ok(result)
         })
         .await
     }

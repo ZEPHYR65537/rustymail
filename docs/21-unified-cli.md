@@ -4,7 +4,7 @@
 
 ## 设计契约
 
-- 一个 `rustymail` 文件提供 `serve`、`send`、`admin`、`check` 四个入口。旧 `rustymaild` / `rustymailctl` 保留相同命令行，作为共享入口代码的薄包装。客户端使用独立配置，只初始化本次提交需要的运行时和 TLS；不打开服务器数据库或启动监听器。
+- 一个 `rustymail` 文件提供 `serve`、`send`、`admin`、`check` 四个入口。开发阶段的旧 `rustymaild` / `rustymailctl` 包装和重复参数解析已删除，实验脚本也只调用统一入口。客户端使用独立配置，只初始化本次提交需要的运行时和 TLS；不打开服务器数据库或启动监听器。
 - `send` 接受已有 RFC 邮件文件，或从标准输入读取；本轮不实现主题、附件或 MIME 编辑器。要求 CRLF、ASCII 头部、有头／正文分隔、每行不超过 1000 字节（含 CRLF），正文有高位字节时协商 8BITMIME。Bcc、Resent-Bcc、Return-Path 及其折行在发送前移除，收件人只取 `--to`。
 - 在连接前校验整条输入并复制到私有临时快照，默认输入上限 25 MiB、头部 64 KiB。占用固定缓冲，临时磁盘占用受大小上限约束；不是持久队列。文件和 stdin 使用同一路径，各收件人从同一份快照的独立文件句柄读取，避免修改源文件或取消读任务导致内容串位。
 - 复用单收件人 SMTP/TLS 引擎；一次命令按参数顺序逐人提交，最多 100 个 `--to` 参数，随后去重；域名大小写归一而远端 local-part 大小写保留。没有自动重试、连接池或收件人头部推导。
@@ -28,7 +28,7 @@ rustymail admin --config deploy/rustymail.lab.toml queue list
 
 ## 完成条件
 
-需要验证：旧入口兼容；仅客户端配置即可发送且不创建服务器数据；真实 TLS/STARTTLS 与 AUTH；错误 CA／主机名／过期证书不发送密码；文件和 stdin 一致；Bcc 与 Return-Path 清理；恶意／超限输入在任何网络提交前拒绝；多收件人部分接受、4xx/5xx、丢失最终回复及退出码；原队列 EOF 校验、取消及锁生命周期回归。CLI 结果必须与独立对端实际收到的字节相符，不能只测试 JSON 字段。
+需要验证：统一入口；仅客户端配置即可发送且不创建服务器数据；真实 TLS/STARTTLS 与 AUTH；错误 CA／主机名／过期证书不发送密码；文件和 stdin 一致；Bcc 与 Return-Path 清理；恶意／超限输入在任何网络提交前拒绝；多收件人部分接受、4xx/5xx、丢失最终回复及退出码；原队列 EOF 校验、取消及锁生命周期回归。CLI 结果必须与独立对端实际收到的字节相符，不能只测试 JSON 字段。
 
 ## 配置与结果示例
 
@@ -68,7 +68,7 @@ rustymail send --config client.toml --to bob@example.com --file message.eml
 
 [客户端库](../crates/client/Cargo.toml)只依赖协议、配置、TLS 和临时文件等能力，没有 SQLite、Argon2 或服务端依赖。统一二进制包含服务端代码，但客户端路径不初始化这些服务。现阶段未提供单独的精简客户端可执行文件或 feature 裁剪承诺。
 
-只需要统一程序时，可执行 `cargo build -p rustymail-server --bin rustymail --release --locked`；不必同时分发两个兼容入口。二进制的磁盘大小、操作系统实际映射的代码页、运行时堆分配是不同指标，不能由文件大小直接推算发信内存。
+只需要统一程序时，可执行 `cargo build -p rustymail-server --bin rustymail --release --locked`；当前只提供这一个可执行入口。二进制的磁盘大小、操作系统实际映射的代码页、运行时堆分配是不同指标，不能由文件大小直接推算发信内存。
 
 队列保留自己的 `QueueLease` 和持久化状态；[适配层](../crates/server/src/relay.rs)把共享 SMTP 结果转换为队列结果，并在正文前提交阶段标记。CLI 使用内存标记来判断未知结果。这样复用的是网络交换算法，持久责任仍由各自调用方负责。
 

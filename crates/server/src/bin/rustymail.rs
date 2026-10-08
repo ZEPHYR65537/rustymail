@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
+use rustymail_server::cli::daemon::Mode;
 use rustymail_server::cli::{control, daemon, send};
 use std::{path::PathBuf, process::ExitCode};
 
@@ -31,14 +32,6 @@ enum Command {
     /// Existing local/offline or Unix-socket administration.
     Admin(control::Args),
 }
-#[derive(Clone, Copy, ValueEnum)]
-enum Mode {
-    Production,
-    Lab,
-    LabTls,
-    LabSmtp,
-    LabRelay,
-}
 fn main() -> ExitCode {
     let args = Args::parse();
     // Parse first; a send/admin invocation never creates server workers.
@@ -58,26 +51,8 @@ fn main() -> ExitCode {
         match args.command {
             Command::Send(args) => send::entry(args).await,
             Command::Admin(args) => control::entry(args).await,
-            Command::Check { config } => {
-                daemon::entry(daemon::Args {
-                    config,
-                    command: daemon::Command::Check,
-                })
-                .await
-            }
-            Command::Serve { config, mode } => {
-                daemon::entry(daemon::Args {
-                    config,
-                    command: match mode {
-                        Mode::Production => daemon::Command::Serve,
-                        Mode::Lab => daemon::Command::ServeLab,
-                        Mode::LabTls => daemon::Command::ServeLabTls,
-                        Mode::LabSmtp => daemon::Command::ServeLabSmtp,
-                        Mode::LabRelay => daemon::Command::ServeLabRelay,
-                    },
-                })
-                .await
-            }
+            Command::Check { config } => daemon::entry(config, None).await,
+            Command::Serve { config, mode } => daemon::entry(config, Some(mode)).await,
         }
     })
 }

@@ -2,16 +2,17 @@
 
 本章对应 0.2.0 的存储与恢复核心。首先运行 [README](../README.md) 的本地收信实验。本阶段继续只允许 L0 环回 SMTP；没有 TLS、登录、IMAP 或外发。验证完成状态以 [M1 报告](../reports/m1/validation.md)为准。
 
+命令与结构检查说明已更新为当前实现；原迁移策略由[第 23 章](23-simplicity-and-invariants.md)替代。历史报告中的版本、测试数量和性能结果只代表当时的代码。
+
 ## 1. 运维前先取得唯一访问权
 
-以下命令在仓库根目录执行，示例使用 debug 二进制。生产优化构建对应 `target/release/`。先停止 `rustymaild`；管理程序使用相同的独占实例锁，在服务仍运行时会拒绝进入。
+以下命令在仓库根目录执行，示例使用 debug 二进制。生产优化构建对应 `target/release/`。先停止 `rustymail serve`；管理程序使用相同的独占实例锁，在服务仍运行时会拒绝进入。
 
 ```sh
-target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
-target/debug/rustymailctl --config deploy/rustymail.lab.toml migrations
+target/debug/rustymail admin --config deploy/rustymail.lab.toml check-store
 ```
 
-检查命令不会因为数据目录拼错就创建一个空邮箱。缺失数据库会报错。打开已存在的 schema 1 数据库时，会校验结构并执行事务升级；`migrations` 因此不是完全不修改磁盘的探测命令。升级前保留一致副本；旧二进制会拒绝 schema 2，不支持直接回退版本号。
+检查命令不会因为数据目录拼错或数据库为空就初始化邮箱。不兼容的实验结构会被拒绝；当前程序不提供迁移历史命令，不自动修改旧库。已有数据先用匹配的旧程序导出或备份，再选择新目录。
 
 `check-store` 同时检查 SQLite 完整性/外键、正文长度与摘要、账户用量、UIDNEXT 与事件序号，以及本地投递引用的一致性。`healthy=false` 时命令失败；不会通过删除坏引用让检查“变绿”。完整扫描耗时随存量正文增长，当前尚未实现快速启动与后台 scrub 的分离。
 
@@ -20,7 +21,7 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml migrations
 存储提交和网络响应是两件事。数据库已经提交而结果通道失效时，回复“没有接收”会制造矛盾。服务在这一情况关闭连接，并记录只含内部 ID 的 `acceptance_outcome_unknown` 日志。
 
 ```sh
-target/debug/rustymailctl --config deploy/rustymail.lab.toml operation OPERATION_ID
+target/debug/rustymail admin --config deploy/rustymail.lab.toml operation OPERATION_ID
 ```
 
 从日志复制真实 `operation_id`，不要照抄占位值。成功查到时返回 message ID、blob ID、字节数、摘要、接受时刻和收件人数。`operation=null` 表示在取得独占锁、此前在途工作已结束之后，数据库中没有该内部操作。它不证明发送方从未重试，也不消除外部 SMTP 的重复窗口。
@@ -30,9 +31,9 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml operation OPERATION
 ## 3. 离线垃圾回收：默认预览，执行时重新判断
 
 ```sh
-target/debug/rustymailctl --config deploy/rustymail.lab.toml gc
-target/debug/rustymailctl --config deploy/rustymail.lab.toml gc --apply
-target/debug/rustymailctl --config deploy/rustymail.lab.toml gc-history
+target/debug/rustymail admin --config deploy/rustymail.lab.toml gc
+target/debug/rustymail admin --config deploy/rustymail.lab.toml gc --apply
+target/debug/rustymail admin --config deploy/rustymail.lab.toml gc-history
 ```
 
 默认宽限期为 86400 秒，每次最多处理 1000 个候选；`--limit` 可设为 1–1000，`--min-age-seconds` 可改变宽限期。较短宽限期适合合成故障实验，日常维护应保留诊断时间。输出逐项 JSON 和最终统计，不把全部候选一次载入内存。
@@ -57,8 +58,8 @@ GC 只删除两类文件：超出宽限期的 `staging/*.part`，以及数据库
 通过 operation 查询找到 blob ID，或从已保存的备份清单定位。仅当正文路径不存在时可以恢复：
 
 ```sh
-target/debug/rustymailctl --config deploy/rustymail.lab.toml recover-blob BLOB_ID --source verified-copy.eml
-target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
+target/debug/rustymail admin --config deploy/rustymail.lab.toml recover-blob BLOB_ID --source verified-copy.eml
+target/debug/rustymail admin --config deploy/rustymail.lab.toml check-store
 ```
 
 恢复过程以小缓冲读取副本，验证长度与 SHA-256，先同步临时文件，再用不可覆盖的同文件系统硬链接发布目标，同步目标目录，最后清除临时名字并同步 staging 目录。已有文件一律拒绝覆盖；内容错误、过大或摘要不同的副本不会成为可见正文。
@@ -69,15 +70,13 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 
 `checkpoint` 可在离线维护时截断已检查点的 WAL；它调用 SQLite 的 checkpoint 接口。不能手工删除 WAL/SHM 来“清理”数据库。
 
-## 5. 迁移不是只改一个版本号
+## 5. 初始化与格式检查
 
-[migration.rs](../crates/store/src/migration.rs)对照内置 schema 校验 SQLite 对象结构，对迁移 SQL 记录版本、名称、SHA-256、时间和是否从旧版本接纳。换行格式统一后计算摘要，以便跨平台一致。
+[schema.rs](../crates/store/src/schema.rs)只接受空库或完全匹配的当前结构。空库初始化在一个 SQLite 事务中创建业务表、索引和 application_id 标记；事务前半段失败会整体回滚，提交后的结果丢失则重新打开确认。检查已有库不会触发初始化。
 
-schema 1 的接纳要求结构匹配；未知表、丢失对象、未来版本或错误摘要都被拒绝。升级的 DDL、迁移记录和 `user_version` 放在同一事务中。事务前半段失败时一起回滚，提交后结果丢失则重新打开并查询实际版本。程序没有自动降低版本的路径。
+application_id 识别文件归属；逐项比对表、索引、触发器等结构，防止仅凭一个整数接受错误的数据库。删除索引、添加未知表、旧实验结构或非零旧 user_version 都会被拒绝；不会覆盖或清空数据。
 
-一个容易漏掉的细节是系统对象名过滤：SQL `LIKE 'sqlite_%'` 中的下划线是单字符通配符，会把用户创建的 `sqliteXextra` 也排除在校验外。实现使用 `GLOB 'sqlite_*'` 保留字面下划线，并用这个反例验证未知表仍被拒绝。用于校验的查询自身同样需要负例。
-
-当前升级不改写已有消息表，独立 CLI 实验验证升级前后的 UID、消息 ID、长度和接受时刻保持一致。SQLite 的版本字段由应用解释，无法代替结构校验与迁移业务规则。[SQLite PRAGMA](https://www.sqlite.org/pragma.html#pragma_user_version)
+早期 M1 曾实现迁移历史、SQL 摘要与旧库接纳。首次正式发布前没有长期兼容这些实验结构的承诺，相关代码和专用测试已移除。保留初始化中断、结构损坏拒绝及正常重开的验证。学习取舍见[第 23 章](23-simplicity-and-invariants.md)。
 
 ## 6. 三层故障实验，不能混为一谈
 
@@ -94,11 +93,11 @@ cargo test --workspace --all-features --locked
 python scripts/smoke.py
 ```
 
-纯存储测试覆盖 14 个失败边界、提交前后两种未知结果、迁移中断、GC 中断、保护保留对象和时钟回拨。真实 TCP 用例检查：文件故障返回临时失败；提交结果未知时直接 EOF，不能返回 250 或声称肯定未接收的 4xx。独立 Python 客户端还检查旧 schema 升级、GC、恢复和原文逐字节一致性。
+纯存储测试覆盖 14 个失败边界、提交前后两种未知结果、初始化中断、GC 中断、保护保留对象和时钟回拨。真实 TCP 用例检查：文件故障返回临时失败；提交结果未知时直接 EOF，不能返回 250 或声称肯定未接收的 4xx。独立 Python 客户端还检查当前结构重开、GC、恢复和原文逐字节一致性。
 
 ## 7. Linux 虚拟机实验与性能基线
 
-[powercut.py](../scripts/powercut.py)创建独立 128 MiB ext4 镜像、512 MiB 内存的 QEMU 客体。在写入、文件同步、rename、目录同步、提交前后、迁移和 GC 的指定点直接杀死 QEMU；另通过客体内真实 SMTP 客户端收到最终 250 后再断电。每次用同一镜像重新启动并检查正文、责任数量和迁移版本。
+[powercut.py](../scripts/powercut.py)创建独立 128 MiB ext4 镜像、512 MiB 内存的 QEMU 客体。在写入、文件同步、rename、目录同步、提交前后、初始化和 GC 的指定点直接杀死 QEMU；另通过客体内真实 SMTP 客户端收到最终 250 后再断电。每次用同一镜像重新启动并检查正文、责任数量和完整结构。
 
 磁盘满用例只允许在带专用内核标记的实验客体及受限 `/data` 文件系统内执行，分别覆盖 SMTP 正文同步和 SQLite 提交。脚本不挂载宿主磁盘、不访问物理块设备、不创建网络接口，也不针对已有邮箱运行。
 

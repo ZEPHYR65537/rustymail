@@ -1,42 +1,23 @@
 use crate::{LabServer, flush_logs, log_event, start_logging};
-use clap::{Parser, Subcommand};
+use clap::ValueEnum;
 use rustymail_core::config::Config;
 use std::{path::PathBuf, process::ExitCode};
 
-#[derive(Parser)]
-#[command(
-    version,
-    about = "rustymail: laboratory mail receiver (not a production release)"
-)]
-pub struct Args {
-    #[arg(long, default_value = "deploy/rustymail.lab.toml")]
-    pub config: PathBuf,
-    #[command(subcommand)]
-    pub command: Command,
+#[derive(Clone, Copy, ValueEnum)]
+pub enum Mode {
+    Production,
+    Lab,
+    LabTls,
+    LabSmtp,
+    LabRelay,
 }
 
-#[derive(Subcommand)]
-pub enum Command {
-    /// Validate the complete configuration schema, without binding or writing.
-    Check,
-    /// Receive raw mail on the loopback SMTP listener only; no AUTH/TLS/IMAP.
-    ServeLab,
-    /// Loopback implicit TLS submission and local administration (Unix socket on Linux).
-    ServeLabTls,
-    /// Three loopback roles: SMTP receive, implicit TLS and STARTTLS submission.
-    ServeLabSmtp,
-    /// Three loopback roles and a verified, fixed-upstream relay worker.
-    ServeLabRelay,
-    /// Reserved production entry point; always refuses in this release.
-    Serve,
-}
-
-pub async fn entry(args: Args) -> ExitCode {
+pub async fn entry(config: PathBuf, mode: Option<Mode>) -> ExitCode {
     if let Err(error) = start_logging() {
         eprintln!("{error}");
         return ExitCode::FAILURE;
     }
-    let status = match run(args).await {
+    let status = match run(config, mode).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             log_event(
@@ -50,27 +31,27 @@ pub async fn entry(args: Args) -> ExitCode {
     status
 }
 
-async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
-    let config = Config::load(args.config)?;
-    match args.command {
-        Command::Check => {
+async fn run(path: PathBuf, mode: Option<Mode>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = Config::load(path)?;
+    match mode {
+        None => {
             println!("{}",serde_json::json!({"configuration":"valid","check":"structural_only",
                 "production_ready":false,"version":env!("CARGO_PKG_VERSION")}));
         }
-        Command::Serve => return Err("production serve is not implemented; use serve-lab with the explicit loopback lab configuration".into()),
-        Command::ServeLab => {
+        Some(Mode::Production) => return Err("production serve is not implemented; use serve --mode lab with an explicit loopback lab configuration".into()),
+        Some(Mode::Lab) => {
             let server = LabServer::bind(config).await?;
             server.serve_until(shutdown_signal()).await?;
         }
-        Command::ServeLabTls=>{
+        Some(Mode::LabTls)=>{
             let server=LabServer::bind_tls(config).await?;
             server.serve_until(shutdown_signal()).await?;
         }
-        Command::ServeLabSmtp => {
+        Some(Mode::LabSmtp) => {
             let server = LabServer::bind_smtp(config).await?;
             server.serve_until(shutdown_signal()).await?;
         }
-        Command::ServeLabRelay => {
+        Some(Mode::LabRelay) => {
             LabServer::bind_relay(config).await?.serve_until(shutdown_signal()).await?;
         }
     }

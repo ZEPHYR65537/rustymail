@@ -48,14 +48,14 @@ def main():
         for key, value in values.items():
             config = re.sub(r'^'+key+r' = .*$', lambda _:key+' = '+json.dumps(value), config, flags=re.M)
         settings = {'disk_reserve_bytes':1, 'disk_reserve_percent':1, 'connections':4, 'connections_per_ip':4,
-                    'ingest_concurrency':4, 'imap_sessions_per_account':4,
+                    'ingest_concurrency':4,
                     'tls_handshakes':1, 'handshake_timeout_seconds':3, 'shutdown_grace_seconds':2,
                     'submission_unauthenticated_seconds':30}
         for key, value in settings.items():
             config = re.sub(r'^'+key+r' = .*$', lambda _:f'{key} = {value}', config, flags=re.M)
         config_path = base/'server.toml'
         config_path.write_text(config, encoding='utf-8')
-        control = [str(binaries/('rustymailctl'+suffix)), '--config', str(config_path)]
+        control = [str(binaries/('rustymail'+suffix)), 'admin', '--config', str(config_path)]
         socket_path = base/'admin'/'admin.sock'
 
         def ctl(*command, online=False):
@@ -93,7 +93,7 @@ def main():
                 nonlocal process
                 config_path.write_text(config.replace('submission_unauthenticated_seconds = 30',
                                                      f'submission_unauthenticated_seconds = {lifetime}'), encoding='utf-8')
-                process = subprocess.Popen([str(binaries/('rustymaild'+suffix)), '--config', str(config_path), 'serve-lab-smtp'],
+                process = subprocess.Popen([str(binaries/('rustymail'+suffix)), 'serve', '--config', str(config_path), '--mode', 'lab-smtp'],
                                            stdout=subprocess.DEVNULL, stderr=log, **hidden)
                 deadline = time.monotonic()+45
                 while True:

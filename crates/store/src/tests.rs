@@ -339,6 +339,50 @@ async fn internal_retry_is_idempotent_but_conflicting_key_is_rejected() {
 }
 
 #[tokio::test]
+async fn aliases_share_quota_and_allocate_distinct_uids_atomically() {
+    let directory = private_test_directory();
+    let mut store = Store::open(directory.path(), options()).unwrap();
+    let total = RAW.len() as u64 * 2;
+    store.create_account(&address("alice"), total - 1).unwrap();
+    store
+        .connection
+        .execute(
+            "INSERT INTO address(address,account_id) SELECT 'alias@example.com',id FROM account WHERE login='alice@example.com'",
+            [],
+        )
+        .unwrap();
+    let message = prepared(&store, RAW).await;
+    assert!(matches!(
+        store.accept(message, plan(KEY, &["alice", "alias"])),
+        Err(StoreError::Quota)
+    ));
+    assert!(
+        store
+            .list_messages(&address("alice"), 0, 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(store.check_integrity().unwrap().healthy());
+    store.set_account_quota(&address("alice"), total).unwrap();
+    let message = prepared(&store, RAW).await;
+    store
+        .accept(message, plan(KEY, &["alice", "alias"]))
+        .unwrap();
+    let messages = store.list_messages(&address("alice"), 0, 10).unwrap();
+    assert_eq!(messages.iter().map(|m| m.uid).collect::<Vec<_>>(), [1, 2]);
+    let used: u64 = store
+        .connection
+        .query_row(
+            "SELECT used_bytes FROM account WHERE login='alice@example.com'",
+            [],
+            |r| unsigned_column(r, 0),
+        )
+        .unwrap();
+    assert_eq!(used, total);
+    assert!(store.check_integrity().unwrap().healthy());
+}
+
+#[tokio::test]
 async fn alias_uid_exhaustion_rolls_back_without_wraparound() {
     let directory = private_test_directory();
     let mut store = Store::open(directory.path(), options()).unwrap();
@@ -392,7 +436,7 @@ fn exclusive_lock_and_future_schema_are_fail_closed() {
     drop(store);
     assert!(matches!(
         Store::open(directory.path(), options()),
-        Err(StoreError::SchemaVersion)
+        Err(StoreError::UnsupportedSchema)
     ));
     let connection = Connection::open(directory.path().join("meta.sqlite")).unwrap();
     let version: i64 = connection

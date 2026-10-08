@@ -18,7 +18,7 @@ python scripts/smoke.py
 手动运行方法见 [README](../README.md)。停止服务、列信后，将输出中的 `message_id` 代入：
 
 ```sh
-target/debug/rustymailctl --config deploy/rustymail.lab.toml mail export alice@example.com MESSAGE_ID --output first.eml
+target/debug/rustymail admin --config deploy/rustymail.lab.toml mail export alice@example.com MESSAGE_ID --output first.eml
 ```
 
 `MESSAGE_ID` 是占位值，不要照抄。导出文件必须不存在；已有文件会被拒绝覆盖。可使用文本编辑器检查头部、正文和行首点，也可用邮件阅读器打开 `.eml`。服务停止后执行 `check-store`，健康结果需满足 `healthy=true`、`missing_blobs=0`、`corrupt_blobs=0`。`orphan_blobs` 与 `staging_files` 是另一类问题，见后文。
@@ -42,7 +42,7 @@ python scripts/smoke.py --bin-dir target/release
 | [protocol](../crates/protocol/src/lib.rs) | 字节如何成为一条命令？命令是否合法取决于什么？ |
 | [store](../crates/store/src/lib.rs)、[blob](../crates/store/src/blob.rs) | 文件和数据库怎样一起承担接受责任？ |
 | [server](../crates/server/src/lib.rs)、[worker](../crates/server/src/worker.rs) | 异步网络如何调用同步数据库，并限制资源？ |
-| [守护进程入口](../crates/server/src/cli/daemon.rs)、[管理入口](../crates/server/src/cli/control.rs) | 命令行怎样声明当前能力、拒绝危险模式？0.9.0 将原 rustymaild/rustymailctl 逻辑移至此处，旧二进制保留薄包装。 |
+| [守护进程入口](../crates/server/src/cli/daemon.rs)、[管理入口](../crates/server/src/cli/control.rs) | 命令行怎样声明当前能力、拒绝危险模式？0.9.0 将原 rustymaild/rustymailctl 逻辑移至此处；第 23 章整理后只保留统一程序。 |
 | [真实 TCP 测试](../crates/server/tests/smtp.rs)、[存储故障测试](../crates/store/src/tests.rs) | 如何证明某个故障不会变成错误的成功响应？ |
 
 `core` 不依赖服务器；`protocol` 不访问磁盘；`store` 不懂 SMTP 响应；`server` 连接这几层。测试因此可以分别定位语法、会话、存储和网络错误。
@@ -214,7 +214,7 @@ cargo test -p rustymail-store child_process_crash_matrix_preserves_only_committe
 
 ## 9. 0.1.0 当时与完整设计的差距
 
-迁移采用 SQLite `PRAGMA user_version=1`，未来版本拒绝启动；没有声称已实现完整迁移历史或降级工具。blob 暂用单层目录，未分片；MIME 元数据写入空占位对象，不能供 IMAP FETCH 使用。账号创建只生成接收权限，没有密码或可登录身份。配置中的未来字段仅有结构验证，`logging.level` 等字段尚不驱动完整可观测性系统。
+0.1.0 当时采用 SQLite `PRAGMA user_version=1`，拒绝未来版本；blob 使用单层目录，MIME 元数据写入空占位对象，未来配置字段只有结构验证。这些是历史实现：当前已移除迁移链、无内容的 MIME 占位列和未接入的配置项，详见[第 23 章](23-simplicity-and-invariants.md)。账号创建仍只生成接收权限，登录凭据由管理命令另行创建。
 
 0.1.0 当时没有 TLS/AUTH、IMAP、出站队列、退信、域认证、反垃圾、备份/GC、指标端点，也没有 Received/Return-Path 注入与 MIME 语义验证。M1/M2/M3.1 已逐步补上其中的 GC、TLS、身份和入口角色，其余限制以 README 与实现计划为准。当前 `serve` 仍拒绝，实验模式要求环回、禁用外发与显式实验扫描策略；不要转发到公网或降低 Emacs 的 TLS 要求。
 

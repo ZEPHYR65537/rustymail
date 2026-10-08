@@ -54,8 +54,6 @@ enum Command {
     Operation {
         operation_id: String,
     },
-    /// Show validated migration history (opens/upgrades a supported legacy store).
-    Migrations,
     /// Preview stale temporary files and unreferenced blobs; --apply deletes.
     Gc {
         #[arg(long)]
@@ -217,7 +215,7 @@ pub async fn entry(args: Args) -> ExitCode {
 
 async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load(args.config)?;
-    config.require_lab_storage()?;
+    config.validate()?;
     if let Some((request, secret_path, creates_secret)) = management_request(&args.command) {
         if creates_secret && secret_path.is_none() && !std::io::stdout().is_terminal() {
             return Err("credential creation needs a terminal or --secret-output; secrets are never command arguments".into());
@@ -294,12 +292,6 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "{}",
                 serde_json::json!({"operation":store.operation(&operation_id)?})
-            );
-        }
-        Command::Migrations => {
-            println!(
-                "{}",
-                serde_json::json!({"schema_version":rustymail_store::CURRENT_VERSION,"history":store.migration_history()?})
             );
         }
         Command::Gc {
@@ -651,55 +643,16 @@ fn offline_management(
     config: &Config,
     request: AdminRequest,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    use serde_json::json;
-    let mut store = Store::open_existing(&config.data_dir, store_options(config))?;
-    fn local(raw: &str, config: &Config) -> Result<Address, Box<dyn std::error::Error>> {
-        let address = Address::parse(raw)?;
-        if !config
-            .local_domains
-            .iter()
-            .any(|d| d.eq_ignore_ascii_case(address.domain()))
-        {
-            return Err("address is not local".into());
-        }
-        Ok(address)
+    if matches!(request, AdminRequest::ReloadTls) {
+        return Err("reload-tls needs the running daemon's --socket".into());
     }
-    Ok(match request {
-        AdminRequest::Status => {
-            json!({"version":env!("CARGO_PKG_VERSION"),"mode":"offline","production_ready":false})
-        }
-        AdminRequest::ReloadTls => {
-            return Err("reload-tls needs the running daemon's --socket".into());
-        }
-        AdminRequest::CredentialCreate {
-            login,
-            label,
-            scope,
-        } => {
-            let login = local(&login, config)?;
-            let (selector, token, phc) = crate::auth::generate_credential(&config.authentication)?;
-            let id = store.create_credential(&login, &selector, &label, &scope, &phc)?;
-            json!({"credential_id":id,"selector":selector,"application_password":&*token})
-        }
-        AdminRequest::CredentialList {
-            login,
-            after_id,
-            limit,
-        } => json!({"credentials":store.list_credentials(&local(&login,config)?,after_id,limit)?}),
-        AdminRequest::CredentialRevoke { selector } => {
-            json!({"account_id":store.revoke_credential(&selector)?})
-        }
-        AdminRequest::AccountDisable { login } => {
-            json!({"account_id":store.disable_account(&local(&login,config)?)?})
-        }
-        AdminRequest::SendAs {
-            login,
-            address,
-            enabled,
-        } => {
-            json!({"account_id":store.set_send_as(&local(&login,config)?,&local(&address,config)?,enabled)?})
-        }
-    })
+    let mut store = Store::open_existing(&config.data_dir, store_options(config))?;
+    let credential = if request.needs_credential(config)? {
+        Some(crate::auth::generate_credential(&config.authentication)?)
+    } else {
+        None
+    };
+    Ok(request.apply(&mut store, config, credential, "offline")?)
 }
 
 #[cfg(unix)]

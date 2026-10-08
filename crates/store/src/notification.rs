@@ -2,9 +2,9 @@
 //! notification is explicitly suppressed. Network delivery is a separate duty.
 use crate::{
     AcceptedMessage, FaultPoint, PreparedMessage, QueueBody, StagedMessage, StorageRuntime, Store,
-    StoreError, blob, queue, unsigned_column,
+    StoreError, blob, local_delivery, queue,
 };
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use rustymail_core::{Address, valid_domain};
 use std::collections::BTreeSet;
 use time::{OffsetDateTime, format_description::well_known::Rfc2822};
@@ -81,39 +81,6 @@ struct Failure {
     authenticated: bool,
     reason: Option<String>,
     code: Option<u16>,
-}
-
-struct LocalTarget {
-    account: i64,
-    mailbox: i64,
-    uid: u64,
-    event: i64,
-}
-fn local_target(
-    db: &Connection,
-    recipient: &Address,
-    size: u64,
-) -> Result<LocalTarget, StoreError> {
-    let row: Option<(i64,i64,u64,i64,u64,u64)>=db.query_row(
-        "SELECT a.account_id,m.id,m.uidnext,m.event_seq,u.quota_bytes,u.used_bytes FROM address a JOIN account u ON u.id=a.account_id JOIN mailbox m ON m.account_id=u.id AND m.name='INBOX' WHERE a.address=?1 AND a.receive_enabled=1 AND u.status='active'",
-        [recipient.local_key()],|r|Ok((r.get(0)?,r.get(1)?,unsigned_column(r,2)?,r.get(3)?,unsigned_column(r,4)?,unsigned_column(r,5)?))).optional()?;
-    let (account, mailbox, uid, event, quota, used) =
-        row.ok_or(StoreError::RecipientUnavailable)?;
-    if uid > u64::from(u32::MAX) || event == i64::MAX {
-        return Err(StoreError::UidExhausted);
-    }
-    if used
-        .checked_add(size)
-        .is_none_or(|n| n > quota || n > i64::MAX as u64)
-    {
-        return Err(StoreError::Quota);
-    }
-    Ok(LocalTarget {
-        account,
-        mailbox,
-        uid,
-        event,
-    })
 }
 
 fn render(
@@ -212,7 +179,11 @@ impl Store {
             };
             let bytes = render(&failure, &plan, policy, &postmaster, now)?;
             if local {
-                local_target(&self.connection, &plan.recipient, bytes.len() as u64)?;
+                local_delivery::preflight(
+                    &self.connection,
+                    &plan.recipient.local_key(),
+                    bytes.len() as u64,
+                )?;
             }
             let mut options = self.options.clone();
             options.max_message_bytes = options.max_message_bytes.min(MAX_REPORT as u64);
@@ -280,26 +251,19 @@ impl Store {
         if !eligible {
             return Err(StoreError::InvalidInput);
         }
-        let local = if plan.local {
-            Some(local_target(&tx, &plan.recipient, message.size)?)
-        } else {
-            None
-        };
         self.runtime.hit(FaultPoint::DatabaseWrite)?;
-        tx.execute("INSERT INTO blob(id,size_bytes,sha256,mime_metadata,metadata_version,created_at_ms) VALUES(?1,?2,?3,?4,1,?5)",params![message.id,message.size as i64,message.hash,b"{}".as_slice(),now])?;
+        tx.execute(
+            "INSERT INTO blob(id,size_bytes,sha256,created_at_ms) VALUES(?1,?2,?3,?4)",
+            params![message.id, message.size as i64, message.hash, now],
+        )?;
         tx.execute("INSERT INTO message(id,ingest_key,blob_id,source,reverse_path,accepted_at_ms) VALUES(?1,?2,?3,'dsn','',?4)",params![plan.report_id,format!("dsn:{}",plan.delivery_id),message.id,now])?;
-        if let Some(target) = local {
-            let delivery = Uuid::new_v4().simple().to_string();
-            tx.execute("INSERT INTO delivery(id,message_id,recipient,route,destination_domain,state,next_attempt_at_ms,expires_at_ms) VALUES(?1,?2,?3,'local',?4,'delivered',?5,?5)",params![delivery,plan.report_id,plan.recipient.local_key(),plan.recipient.domain(),now])?;
-            tx.execute("INSERT INTO mailbox_message(mailbox_id,uid,message_id,delivery_id,internaldate_ms) VALUES(?1,?2,?3,?4,?5)",params![target.mailbox,target.uid as i64,plan.report_id,delivery,now])?;
-            tx.execute(
-                "UPDATE mailbox SET uidnext=uidnext+1,event_seq=event_seq+1 WHERE id=?1",
-                [target.mailbox],
-            )?;
-            tx.execute("INSERT INTO mailbox_event(mailbox_id,event_seq,kind,uid,payload,created_at_ms) VALUES(?1,?2,'append',?3,?4,?5)",params![target.mailbox,target.event+1,target.uid as i64,b"{}".as_slice(),now])?;
-            tx.execute(
-                "UPDATE account SET used_bytes=used_bytes+?2 WHERE id=?1",
-                params![target.account, message.size as i64],
+        if plan.local {
+            local_delivery::deliver(
+                &tx,
+                &plan.recipient.local_key(),
+                &plan.report_id,
+                message.size,
+                now,
             )?;
         } else {
             queue::insert_relay(

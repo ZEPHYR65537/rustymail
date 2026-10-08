@@ -33,7 +33,7 @@ sequenceDiagram
 
 ## 2. 数据库已经保护了什么，还缺什么
 
-schema 1 已有 `delivery` 的状态、尝试次数、到期时间、token 和 generation；当时并没有队列执行路径。新[迁移 0003](../crates/store/migrations/0003.sql)补充两个表及三个部分索引：
+[当前结构](../crates/store/schema.sql)包含 `delivery` 的状态、尝试次数、到期时间、token 和 generation，以及两个队列表和三个部分索引：
 
 | 对象 | 含义与约束 |
 | --- | --- |
@@ -136,10 +136,10 @@ operation ID 是内部操作键。重放必须保持正文 SHA-256/长度、信�
 
 ```sh
 cargo build --workspace --locked
-target/debug/rustymailctl --config deploy/rustymail.lab.toml account add alice@example.com
-target/debug/rustymailctl --config deploy/rustymail.lab.toml queue import-lab --source sample.eml --operation-id 11111111111111111111111111111111 --sender alice@example.com --recipient target@remote.test
-target/debug/rustymailctl --config deploy/rustymail.lab.toml queue list --limit 50
-target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
+target/debug/rustymail admin --config deploy/rustymail.lab.toml account add alice@example.com
+target/debug/rustymail admin --config deploy/rustymail.lab.toml queue import-lab --source sample.eml --operation-id 11111111111111111111111111111111 --sender alice@example.com --recipient target@remote.test
+target/debug/rustymail admin --config deploy/rustymail.lab.toml queue list --limit 50
+target/debug/rustymail admin --config deploy/rustymail.lab.toml check-store
 ```
 
 `sample.eml` 是自己准备的合成邮件文件；账号创建只做一次，用于初始化实验存储。`import-lab` 需要已有目录，拒绝本地域收件人；省略 `--sender` 表示空 reverse-path。它原样保存文件，不验证完整 RFC 内容、不添加 Received/Return-Path、不执行认证或 send-as，不能当成可对外开放的提交入口。BODY 默认 `7bit`，可选 `--body 8bitmime`；生命周期默认五天。operation ID 是 32 位小写十六进制，每个新操作使用新的随机值，相同操作重放才复用。
@@ -147,27 +147,25 @@ target/debug/rustymailctl --config deploy/rustymail.lab.toml check-store
 `queue list` 每行一个 JSON 对象，最多 128 行；用最后一行的 `id` 作为 `--after-id` 继续。列表不暴露 token，但收件人仍属于敏感管理元数据。以下 `DELIVERY_ID` 替换为列表中的实际 ID：
 
 ```sh
-target/debug/rustymailctl --config deploy/rustymail.lab.toml queue hold DELIVERY_ID
-target/debug/rustymailctl --config deploy/rustymail.lab.toml queue retry DELIVERY_ID --allow-duplicate
-target/debug/rustymailctl --config deploy/rustymail.lab.toml queue recover --limit 128
+target/debug/rustymail admin --config deploy/rustymail.lab.toml queue hold DELIVERY_ID
+target/debug/rustymail admin --config deploy/rustymail.lab.toml queue retry DELIVERY_ID --allow-duplicate
+target/debug/rustymail admin --config deploy/rustymail.lab.toml queue recover --limit 128
 ```
 
 uncertain 和 hold 都要求 `--allow-duplicate`：hold 可能来自 uncertain，不能通过先 hold 再 retry 绕过确认。若已过期还需要 `--extend-expired`；failed/delivered 不允许重发。retry 只改待调度状态，输出 `transmitted:false`。离线 CLI 没有活动 owner；分批 recover 到 `recovered < scan_limit` 后，再查列表和完整性报告确认。该规则不适用于将来的在线扫描。
 
-GC 仍只删除无引用文件；队列中 pending、uncertain 甚至已完成的历史引用都会保留正文。当前没有历史清理、自动退信或队列删除命令，长期运行需考虑磁盘增长；不能用手工删库行来模拟过期策略。
+GC 仍只删除无引用文件；队列中 pending、uncertain 甚至已完成的历史引用都会保留正文。失败通知已在 M4.3 实现，历史清理和队列删除仍未实现，长期运行需考虑磁盘增长；不能用手工删库行来模拟过期策略。
 
-### schema 2 → 3 的升级
+### 当前结构与实验数据
 
-首次打开时由已有迁移框架原子执行 0003 并记录摘要；1 → 3 同样受迁移事务保护。没有重写旧 blob、UID、配额和本地 delivery。测试在已有本地邮件的可丢弃 schema 2 fixture 上分别中断迁移提交前后，重开后检查记录与 UID；测试中的 DROP TABLE 只用于构造旧版本临时 fixture，绝不是运维降级方法。
-
-升级前停服务，备份一致的元数据和 blob；旧版二进制会拒绝 schema 3，不能仅替换旧可执行文件回滚。若需要回退，恢复升级前的完整一致快照，并处理升级后新增数据；完整生产回滚演练仍属于 M7。
+当前结构直接初始化全部队列表和索引，不再从 schema 1/2 升级。旧实验库保留原样并被拒绝打开；需要保留的数据应先用旧程序导出或备份。结构整理不能跳过初始化事务、文件归属和完整结构校验，详见[第 23 章](23-simplicity-and-invariants.md)。
 
 ## 8. 源码与实验导读
 
 | 阅读位置 | 重点 |
 | --- | --- |
 | [queue.rs](../crates/store/src/queue.rs) | enqueue 顺序、租约 guard、索引扫描、状态迁移、流式校验 |
-| [queue_tests.rs](../crates/store/src/queue_tests.rs) | 逐人结果、提交故障、过期活任务、时钟、跨域进展、损坏及迁移 |
+| [queue_tests.rs](../crates/store/src/queue_tests.rs) | 逐人结果、提交故障、过期活任务、时钟、跨域进展、损坏与当前结构 |
 | [runtime.rs](../crates/store/src/runtime.rs) | 可替换双时钟、正常构建中禁用的故障钩子 |
 | [control.rs](../crates/server/src/cli/control.rs) | 可信离线管理入口与有界导入；0.9.0 从 rustymailctl.rs 移入共享入口 |
 | [m41_probe.rs](../crates/store/examples/m41_probe.rs) / [m41_smoke.py](../scripts/m41_smoke.py) | 同步故障标记、真实进程终止、独立 SQLite 观察与恢复 |

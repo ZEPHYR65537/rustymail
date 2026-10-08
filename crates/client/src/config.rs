@@ -123,7 +123,6 @@ impl InputLimits {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {
-    pub schema_version: u32,
     pub sender: String,
     pub smtp: SmtpSettings,
     #[serde(default)]
@@ -137,10 +136,8 @@ impl ClientConfig {
         let config: Self = toml::from_str(text).map_err(|_| {
             io::Error::other("invalid client TOML, unknown field or wrong type; values redacted")
         })?;
-        if config.schema_version != 1 || Address::parse(&config.sender).is_err() {
-            return Err(io::Error::other(
-                "invalid client schema version or envelope sender",
-            ));
+        if Address::parse(&config.sender).is_err() {
+            return Err(io::Error::other("invalid envelope sender"));
         }
         config.smtp.validate()?;
         config.limits.validate()?;
@@ -173,7 +170,7 @@ mod tests {
     fn schema_rejects_unknown_plaintext_and_unbounded_settings_without_echoing_values() {
         assert!(ClientConfig::parse(EXAMPLE).is_ok());
         for input in [
-            EXAMPLE.replace("schema_version = 1", "schema_version = 2"),
+            EXAMPLE.replace("sender = \"alice@example.com\"", "sender = \"invalid\""),
             EXAMPLE.replace("starttls", "plaintext"),
             EXAMPLE.replace("port = 587", "port = 0"),
             EXAMPLE.replace("26214400", "26214401"),

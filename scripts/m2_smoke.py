@@ -51,8 +51,8 @@ def main():
         for source, target in [('server.pem','active.pem'),('server.key','active.key')]:
             shutil.copyfile(certificates/source,base/target)
             os.chmod(base/target,0o600)
-        control = [str(binaries/('rustymailctl'+suffix)), '--config', str(config_path)]
-        daemon = [str(binaries/('rustymaild'+suffix)), '--config', str(config_path), 'serve-lab-tls']
+        control = [str(binaries/('rustymail'+suffix)), 'admin', '--config', str(config_path)]
+        daemon = [str(binaries/('rustymail'+suffix)), 'serve', '--config', str(config_path), '--mode', 'lab-tls']
         socket_path = base/'admin'/'admin.sock'
 
         def ctl(*command, online=False, success=True):
@@ -63,7 +63,8 @@ def main():
 
         for name in ['alice','bob']:
             ctl('account','add',name+'@example.com')
-        ctl('send-as','alice@example.com','alice@example.com')
+        send_as = ctl('send-as','alice@example.com','alice@example.com')
+        assert send_as['enabled'] is True
         ctl('send-as','alice@example.com','bob@example.com',success=False)
         ctl('credential','create','alice@example.com','--label','no-stdout-leak',success=False)
         secrets = []
@@ -183,6 +184,7 @@ def main():
                 assert socket_path.stat().st_mode & 0o077 == 0
                 assert socket_path.parent.stat().st_mode & 0o077 == 0
                 assert ctl('status',online=True)['mode']=='lab_tls'
+                assert ctl('send-as','alice@example.com','alice@example.com',online=True) == send_as
                 page = ctl('credential', 'list', 'listing@example.com', '--limit', '100', online=True)['credentials']
                 assert len(page) == 100 and all(item['label'] == '"\\'*40 for item in page)
                 completed.append('100-entry credential page with maximum escaped labels crosses Unix management transport')

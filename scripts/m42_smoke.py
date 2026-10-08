@@ -184,7 +184,7 @@ def configuration(base, peer, certificates, authenticate=False):
 
 
 class RelayLab(Lab):
-    command = 'serve-lab-relay'
+    command = 'lab-relay'
 
     def __init__(self, bin_dir):
         super().__init__(bin_dir, {'recipients_per_message':8})
@@ -219,7 +219,7 @@ class RelayLab(Lab):
 
     def restart(self):
         assert self.process.poll() is not None
-        self.process = subprocess.Popen([str(self.binaries/('rustymaild'+self.suffix)), '--config',str(self.config),self.command],
+        self.process = subprocess.Popen([str(self.binaries/('rustymail'+self.suffix)), 'serve', '--config',str(self.config),'--mode',self.command],
                                         stdout=subprocess.DEVNULL,stderr=self.log,**self.hidden)
         deadline = time.monotonic()+30
         while True:

@@ -409,57 +409,6 @@ async fn queued_reader_detects_same_length_corruption_before_successful_eof() {
     );
 }
 
-#[tokio::test]
-async fn version_two_upgrade_is_atomic_and_preserves_existing_local_mail() {
-    for boundary in [FaultPoint::MigrationApplied, FaultPoint::MigrationCommitted] {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("mail");
-        let mut store = Store::open(&root, options()).unwrap();
-        let address = Address::parse("alice@example.com").unwrap();
-        store.create_account(&address, 10000).unwrap();
-        let accepted = store
-            .accept(
-                prepared(&store).await,
-                crate::Acceptance {
-                    operation_id: "22222222222222222222222222222222".into(),
-                    sender: None,
-                    recipients: vec![address.clone()],
-                },
-            )
-            .unwrap();
-        crate::legacy_lab_fixture(&mut store.connection, 2).unwrap();
-        assert_eq!(crate::migration::validate(&store.connection).unwrap(), 2);
-        drop(store);
-        let runtime = StorageRuntime::default().with_hook(move |point| {
-            if point == boundary {
-                Err(io::Error::other("migration cut"))
-            } else {
-                Ok(())
-            }
-        });
-        assert!(Store::open_with_runtime(&root, options(), runtime).is_err());
-        let connection = rusqlite::Connection::open(root.join("meta.sqlite")).unwrap();
-        assert_eq!(
-            crate::migration::validate(&connection).unwrap(),
-            if boundary == FaultPoint::MigrationApplied {
-                2
-            } else {
-                crate::CURRENT_VERSION
-            }
-        );
-        drop(connection);
-        let store = Store::open_existing(&root, options()).unwrap();
-        let messages = store.list_messages(&address, 0, 10).unwrap();
-        assert_eq!(messages[0].uid, 1);
-        assert_eq!(messages[0].message_id, accepted.message_id);
-        assert!(store.check_integrity().unwrap().healthy());
-        assert_eq!(
-            store.migration_history().unwrap().len(),
-            crate::CURRENT_VERSION as usize
-        );
-    }
-}
-
 #[test]
 fn retry_jitter_and_configuration_have_finite_checked_bounds() {
     let p = QueuePolicy::default();

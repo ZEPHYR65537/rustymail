@@ -24,7 +24,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 POINTS = ["staged", "file_synced", "renamed", "directories_synced", "before_commit",
-          "after_commit", "migration_applied", "migration_committed", "gc_planned",
+          "after_commit", "schema_applied", "schema_committed", "gc_planned",
           "gc_unlinked", "acknowledged"]
 
 
@@ -70,7 +70,7 @@ def make_initrd(binary_directory, kernel, destination):
                 data = gzip.decompress(data)
             name = path.name.removesuffix(".zst").removesuffix(".xz").removesuffix(".gz")
             entries.append((f"modules/{name}", stat.S_IFREG | 0o644, data, 0, 0))
-    for name, path in [("probe", binary_directory / "examples/m1_probe"), ("rustymaild", binary_directory / "rustymaild")]:
+    for name, path in [("probe", binary_directory / "examples/m1_probe"), ("rustymail", binary_directory / "rustymail")]:
         entries.append((name, stat.S_IFREG | 0o755, path.read_bytes(), 0, 0))
     config = (ROOT / "deploy/rustymail.lab.toml").read_text(encoding="utf-8")
     config = config.replace('data_dir = "data/lab"', 'data_dir = "/data/mail"')
@@ -97,12 +97,12 @@ if [ "$MODE" = crash ]; then
   /probe crash /data/mail "$POINT"
 elif [ "$MODE" = smtp ]; then
   /probe seed /data/mail
-  /rustymaild --config /lab.toml serve-lab &
+  /rustymail serve --config /lab.toml --mode lab &
   SERVER=$!
   /probe smtp-ack /data/mail
 elif [ "$MODE" = smtp-full ]; then
   /probe seed /data/mail
-  /rustymaild --config /lab.toml serve-lab &
+  /rustymail serve --config /lab.toml --mode lab &
   SERVER=$!
   /probe smtp-full /data/mail
   kill -TERM "$SERVER"

@@ -44,7 +44,7 @@ def main():
         source.write_bytes(RAW)
 
         def configuration(peer, ca='certificates/ca.pem', username='relay-user', password='password.secret', max_bytes=26214400, header_bytes=65536):
-            text = (f'schema_version = 1\nsender = "alice@example.com"\n[smtp]\nhost = "localhost"\n'
+            text = (f'sender = "alice@example.com"\n[smtp]\nhost = "localhost"\n'
                     f'port = {peer.port}\nsecurity = "{peer.mode}"\nehlo = "client.example.com"\n'
                     f'ca_file = {json.dumps(ca)}\nusername = {json.dumps(username)}\npassword_file = {json.dumps(password)}\n'
                     '[smtp.timeouts]\nconnect_timeout_seconds = 3\nhandshake_timeout_seconds = 3\n'
@@ -170,7 +170,7 @@ def main():
     # A real client invocation interoperates with the existing server credentials.
     with Lab(args.bin_dir) as lab:
         config=lab.base/'client.toml'
-        config.write_text(f'schema_version=1\nsender="alice@example.com"\n[smtp]\nhost="localhost"\nport={lab.ports["submissions"]}\nsecurity="implicit"\nehlo="client.test"\nca_file="certificates/ca.pem"\nusername="alice@example.com"\npassword_file="credential.secret"\n')
+        config.write_text(f'sender="alice@example.com"\n[smtp]\nhost="localhost"\nport={lab.ports["submissions"]}\nsecurity="implicit"\nehlo="client.test"\nca_file="certificates/ca.pem"\nusername="alice@example.com"\npassword_file="credential.secret"\n')
         result=subprocess.run([executable,'send','--config',str(config),'--to','bob@example.com'],input=b'From: alice@example.com\r\n\r\nHello from unified CLI\r\n',capture_output=True,timeout=30,**hidden)
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)['status'] == 'accepted'

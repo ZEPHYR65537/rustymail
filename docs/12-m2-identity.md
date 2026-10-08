@@ -39,14 +39,14 @@ python scripts/m2_smoke.py
 mkdir -p data
 target/debug/examples/m2_certificates data/lab-certificates
 
-target/debug/rustymailctl --config deploy/rustymail.tls-lab.toml account add alice@example.com
-target/debug/rustymailctl --config deploy/rustymail.tls-lab.toml send-as alice@example.com alice@example.com
-target/debug/rustymailctl --config deploy/rustymail.tls-lab.toml credential create alice@example.com --label emacs-lab --secret-output data/emacs-lab.secret
+target/debug/rustymail admin --config deploy/rustymail.tls-lab.toml account add alice@example.com
+target/debug/rustymail admin --config deploy/rustymail.tls-lab.toml send-as alice@example.com alice@example.com
+target/debug/rustymail admin --config deploy/rustymail.tls-lab.toml credential create alice@example.com --label emacs-lab --secret-output data/emacs-lab.secret
 
-target/debug/rustymaild --config deploy/rustymail.tls-lab.toml serve-lab-tls
+target/debug/rustymail serve --mode lab-tls --config deploy/rustymail.tls-lab.toml
 ```
 
-这个启动模式只监听 `listeners.submissions`，模板为 `127.0.0.1:2465`。`serve-lab` 则维持原来的匿名环回 SMTP；两个模式不能同时使用同一数据目录。Unix 管理 socket 为 `data/lab/admin/admin.sock`，目录 0700、socket 0600，只接受 root 或与服务相同 UID/GID 的进程。管理客户端也核对 socket 权限和服务端对端身份。
+这个启动模式只监听 `listeners.submissions`，模板为 `127.0.0.1:2465`。`serve --mode lab` 则维持原来的匿名环回 SMTP；两个模式不能同时使用同一数据目录。Unix 管理 socket 为 `data/lab/admin/admin.sock`，目录 0700、socket 0600，只接受 root 或与服务相同 UID/GID 的进程。管理客户端也核对 socket 权限和服务端对端身份。
 
 随机应用密码格式为 `selector.secret`：selector 为 16 字节随机值的十六进制编码，secret 为 32 字节随机值的十六进制编码。服务只保存 Argon2id PHC。CLI 在交互终端显示一次，或通过 `--secret-output` 创建新的 0600 文件；没有 `--password` 参数，非终端 stdout 默认拒绝生成秘密。文件已存在时在创建凭据之前失败。Windows 文件访问还依赖系统 ACL，生产权限保证以 Linux 为准。
 
@@ -88,8 +88,8 @@ TLS 后 EHLO 才公布 `AUTH PLAIN`。PLAIN 表示 SASL 认证载荷的格式，
 在线管理不绕过存储锁，请求经同一个数据库 owner 执行：
 
 ```sh
-target/debug/rustymailctl --config deploy/rustymail.tls-lab.toml --socket data/lab/admin/admin.sock status
-target/debug/rustymailctl --config deploy/rustymail.tls-lab.toml --socket data/lab/admin/admin.sock credential list alice@example.com
+target/debug/rustymail admin --config deploy/rustymail.tls-lab.toml --socket data/lab/admin/admin.sock status
+target/debug/rustymail admin --config deploy/rustymail.tls-lab.toml --socket data/lab/admin/admin.sock credential list alice@example.com
 ```
 
 从列表复制实际 selector 后，执行 `credential revoke SELECTOR`。也可执行 `account disable alice@example.com` 或 `send-as alice@example.com alias@example.com --disable`，均保留相同的 `--config` 和 `--socket` 前缀。没有 `--socket` 的身份命令为离线操作，需要先停止服务。

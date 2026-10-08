@@ -274,10 +274,10 @@ impl QueueRuntime {
         } else {
             self.clock = Some((wall, mono));
         }
-        self.last_wall = Some(wall);
         if self.clock_changed {
             Err(StoreError::ClockChanged)
         } else {
+            self.last_wall = Some(wall);
             Ok(wall)
         }
     }
@@ -394,8 +394,10 @@ impl Store {
         }
         let id = Uuid::new_v4().simple().to_string();
         self.runtime.hit(FaultPoint::DatabaseWrite)?;
-        tx.execute("INSERT INTO blob(id,size_bytes,sha256,mime_metadata,metadata_version,created_at_ms) VALUES(?1,?2,?3,?4,1,?5)",
-            params![message.id,message.size as i64,message.hash,b"{}".as_slice(),now])?;
+        tx.execute(
+            "INSERT INTO blob(id,size_bytes,sha256,created_at_ms) VALUES(?1,?2,?3,?4)",
+            params![message.id, message.size as i64, message.hash, now],
+        )?;
         tx.execute("INSERT INTO message(id,ingest_key,blob_id,source,reverse_path,accepted_at_ms) VALUES(?1,?2,?3,'import',?4,?5)",
             params![id,plan.operation_id,message.id,sender,now])?;
         insert_relay(&tx, &id, &recipients, plan.body, plan.max_age_seconds, now)?;
@@ -451,7 +453,7 @@ impl Store {
         let ids: Vec<String>=tx.prepare("SELECT id FROM delivery INDEXED BY queue_expiry WHERE route='relay' AND state IN ('pending','deferred') AND expires_at_ms<=?1 ORDER BY expires_at_ms,id LIMIT ?2")?
             .query_map(params![now,limit as i64],|r|r.get(0))?.collect::<Result<_,_>>()?;
         for id in &ids {
-            tx.execute("UPDATE delivery SET state=CASE WHEN possibly_delivered=1 THEN 'uncertain' ELSE 'failed' END,lifecycle_reason='expired',diagnostic=CASE WHEN possibly_delivered=1 THEN 'expired retry; earlier outcome remains unknown' ELSE 'delivery lifetime exceeded' END,notification_due_ms=0 WHERE id=?1",[id])?;
+            tx.execute("UPDATE delivery SET state=CASE WHEN possibly_delivered=1 THEN 'uncertain' ELSE 'failed' END,lifecycle_reason='expired',diagnostic=CASE WHEN possibly_delivered=1 THEN 'expired retry; earlier outcome remains unknown' ELSE 'delivery lifetime exceeded' END,notification_due_ms=?2 WHERE id=?1",params![id,now])?;
         }
         if !ids.is_empty() {
             commit(tx, &self.runtime)?;
@@ -666,6 +668,14 @@ impl Store {
         outcome: QueueResult,
     ) -> Result<(), StoreError> {
         let now = self.runtime.now_ms()?;
+        // Preserve a known SMTP result even when the clock guard has stopped
+        // scheduling. An untrusted forward jump must not postpone its report
+        // after the operator corrects the clock and restarts the process.
+        let notification_due = match self.queue.now(&self.runtime) {
+            Ok(time) => time,
+            Err(StoreError::ClockChanged) => self.queue.last_wall.unwrap_or(now),
+            Err(error) => return Err(error),
+        };
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -709,8 +719,8 @@ impl Store {
             diagnostic = "retry ended; earlier outcome remains unknown";
         }
         // A clock discontinuity must not prevent recording a known remote result.
-        tx.execute("UPDATE delivery SET state=?2,lease_token=NULL,lease_until_ms=NULL,last_smtp_code=?3,diagnostic=?4,next_attempt_at_ms=?5,lifecycle_reason=?6,possibly_delivered=?7 WHERE id=?1",
-            params![lease.id,state,code,diagnostic,now.saturating_add(lease.retry_ms),reason,state=="uncertain"])?;
+        tx.execute("UPDATE delivery SET state=?2,lease_token=NULL,lease_until_ms=NULL,last_smtp_code=?3,diagnostic=?4,next_attempt_at_ms=?5,lifecycle_reason=?6,possibly_delivered=?7,notification_due_ms=?8 WHERE id=?1",
+            params![lease.id,state,code,diagnostic,now.saturating_add(lease.retry_ms),reason,state=="uncertain",notification_due])?;
         tx.execute("DELETE FROM queue_lease WHERE delivery_id=?1", [&lease.id])?;
         commit(tx, &self.runtime)?;
         // Readers can keep the guard alive after finish; capacity remains held

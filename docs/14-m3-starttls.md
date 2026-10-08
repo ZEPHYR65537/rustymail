@@ -10,7 +10,7 @@
 
 同样的 MAIL/RCPT/DATA，可能服务于两个不同问题：外部邮件服务器向本地邮箱投递；本地用户登录后提交要发送的邮件。前者不应要求每个外部服务器持有本地账号密码，后者必须验证用户及其发件权限。TLS 只保护这一跳传输，不证明信封或正文 From 的真实性。
 
-新命令 `serve-lab-smtp` 在一个进程内启动三个环回入口：
+新命令 `serve --mode lab-smtp` 在一个进程内启动三个环回入口：
 
 | 配置 / 实验端口 | 对应生产角色 | TLS 与 AUTH 策略 | 本阶段收件范围 |
 | --- | --- | --- | --- |
@@ -20,7 +20,7 @@
 
 25 角色允许没有 TLS 的本地投递，587 角色要求先升级，是入口策略区别。[RFC 3207 §4、§4.3](https://www.rfc-editor.org/rfc/rfc3207.html#section-4)
 
-三者共享同一个 SQLite owner、应用密码服务、连接/IP 额度、握手额度与接收额度。监听端口增多不应把这些上限乘三。旧 `serve-lab` 和 `serve-lab-tls` 单入口命令继续用于已有实验；不要同时对同一数据目录运行多个实例。
+三者共享同一个 SQLite owner、应用密码服务、连接/IP 额度、握手额度与接收额度。监听端口增多不应把这些上限乘三。旧 `serve --mode lab` 和 `serve --mode lab-tls` 单入口命令继续用于已有实验；不要同时对同一数据目录运行多个实例。
 
 收信入口的 AUTH 明确返回 502，避免提示“加密后可以登录”；提交入口在明文中拒绝 AUTH，返回 538。邮件提交即使完成 TLS，未认证的 MAIL 仍返回 530，发件身份越权返回 553，外域 RCPT 返回 550。收信入口接受的 From 仍是不可信输入，域认证和反垃圾等待 M6，不能将其作为互联网安全策略直接上线。
 
@@ -92,7 +92,7 @@ python scripts/m3_smoke.py
 手动体验可沿 [M2 手动实验](12-m2-identity.md)创建临时证书、Alice 账号、send-as 和应用密码，再把启动命令换为：
 
 ```sh
-target/debug/rustymaild --config deploy/rustymail.tls-lab.toml serve-lab-smtp
+target/debug/rustymail serve --mode lab-smtp --config deploy/rustymail.tls-lab.toml
 ```
 
 使用新的实验目录或复用已经初始化的实验目录；已有账号和秘密文件不要重复创建。下方客户端示例使用 POSIX shell 的 heredoc；PowerShell 用户可将 `PY` 标记之间的 Python 代码保存成临时 `.py` 文件，再从仓库根目录执行。执行时服务须已启动：

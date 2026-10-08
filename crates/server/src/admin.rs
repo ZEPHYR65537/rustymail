@@ -1,13 +1,14 @@
 //! One bounded JSON request per local connection. No internet admin listener.
+#[cfg(unix)]
+use crate::log_event;
 use crate::{auth::AuthService, tls::TlsSettings, worker::StoreClient};
-use rustymail_core::config::Config;
+use rustymail_core::{Address, config::Config};
+use rustymail_store::{Store, StoreError};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{io, sync::Arc};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use zeroize::Zeroizing;
-#[cfg(unix)]
-use {crate::log_event, rustymail_core::Address, serde_json::json};
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -103,108 +104,133 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(
     writer.flush().await
 }
 
+type Credential = (String, Zeroizing<String>, String);
+
+fn local_address(raw: &str, config: &Config) -> Result<Address, StoreError> {
+    let address = Address::parse(raw).map_err(|_| StoreError::InvalidInput)?;
+    if !config
+        .local_domains
+        .iter()
+        .any(|d| d.eq_ignore_ascii_case(address.domain()))
+    {
+        return Err(StoreError::InvalidInput);
+    }
+    Ok(address)
+}
+
+impl AdminRequest {
+    /// Check cheap input constraints before reserving memory for Argon2.
+    pub(crate) fn needs_credential(&self, config: &Config) -> Result<bool, StoreError> {
+        if let Self::CredentialCreate {
+            login,
+            label,
+            scope,
+        } = self
+        {
+            local_address(login, config)?;
+            if label.is_empty()
+                || label.len() > 80
+                || label.chars().any(char::is_control)
+                || !matches!(scope.as_str(), "mail" | "read_only")
+            {
+                return Err(StoreError::InvalidInput);
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// One business operation and response shape, for offline and socket users.
+    /// Expensive credential generation and online revocation notification stay
+    /// with the caller; this method runs in the database owner's context.
+    pub(crate) fn apply(
+        self,
+        store: &mut Store,
+        config: &Config,
+        credential: Option<Credential>,
+        mode: &str,
+    ) -> Result<Value, StoreError> {
+        Ok(match self {
+            Self::Status => {
+                json!({"version":env!("CARGO_PKG_VERSION"),"mode":mode,"production_ready":false})
+            }
+            Self::CredentialCreate {
+                login,
+                label,
+                scope,
+            } => {
+                let (selector, token, phc) = credential.ok_or(StoreError::InvalidInput)?;
+                let id = store.create_credential(
+                    &local_address(&login, config)?,
+                    &selector,
+                    &label,
+                    &scope,
+                    &phc,
+                )?;
+                json!({"credential_id":id,"selector":selector,"application_password":&*token})
+            }
+            Self::CredentialList {
+                login,
+                after_id,
+                limit,
+            } => {
+                json!({"credentials":store.list_credentials(&local_address(&login, config)?,after_id,limit)?})
+            }
+            Self::CredentialRevoke { selector } => {
+                json!({"account_id":store.revoke_credential(&selector)?})
+            }
+            Self::AccountDisable { login } => {
+                json!({"account_id":store.disable_account(&local_address(&login, config)?)?})
+            }
+            Self::SendAs {
+                login,
+                address,
+                enabled,
+            } => {
+                json!({"account_id":store.set_send_as(&local_address(&login, config)?,&local_address(&address, config)?,enabled)?,"enabled":enabled})
+            }
+            Self::ReloadTls => return Err(StoreError::InvalidInput),
+        })
+    }
+}
+
 #[cfg(unix)]
 pub(crate) async fn dispatch(
     request: AdminRequest,
     store: &StoreClient,
     auth: &AuthService,
     tls: &TlsSettings,
-    config: &Config,
+    config: &Arc<Config>,
     mode: &'static str,
 ) -> Result<Value, Box<dyn std::error::Error + Send + Sync>> {
-    fn address(raw: &str, config: &Config) -> Result<Address, io::Error> {
-        let address = Address::parse(raw).map_err(|_| io::Error::other("invalid local address"))?;
-        if !config
-            .local_domains
-            .iter()
-            .any(|domain| domain.eq_ignore_ascii_case(address.domain()))
-        {
-            return Err(io::Error::other("address is not local"));
-        }
-        Ok(address)
-    }
-    let (event, result) = match request {
-        AdminRequest::Status => (
-            "admin_status",
-            json!({"version":env!("CARGO_PKG_VERSION"),"mode":mode,"production_ready":false}),
-        ),
-        AdminRequest::CredentialCreate {
-            login,
-            label,
-            scope,
-        } => {
-            let login = address(&login, config)?;
-            if label.is_empty()
-                || label.len() > 80
-                || !matches!(scope.as_str(), "mail" | "read_only")
-            {
-                return Err("invalid credential options".into());
-            }
-            let (selector, token, phc) = auth.generate().await?;
-            let for_store = selector.clone();
-            let id = store
-                .call(move |store| {
-                    store.create_credential(&login, &for_store, &label, &scope, &phc)
-                })
-                .await?;
-            // This response travels only over the private management socket.
-            (
-                "credential_created",
-                json!({"credential_id":id,"selector":selector,"application_password":&*token}),
-            )
-        }
-        AdminRequest::CredentialList {
-            login,
-            after_id,
-            limit,
-        } => {
-            let login = address(&login, config)?;
-            let list = store
-                .call(move |store| store.list_credentials(&login, after_id, limit))
-                .await?;
-            ("credential_listed", json!({"credentials":list}))
-        }
-        AdminRequest::CredentialRevoke { selector } => {
-            let id = store
-                .change_authority(auth.changes.clone(), move |store| {
-                    store.revoke_credential(&selector)
-                })
-                .await?;
-            ("credential_revoked", json!({"account_id":id}))
-        }
-        AdminRequest::AccountDisable { login } => {
-            let login = address(&login, config)?;
-            let id = store
-                .change_authority(auth.changes.clone(), move |store| {
-                    store.disable_account(&login)
-                })
-                .await?;
-            ("account_disabled", json!({"account_id":id}))
-        }
-        AdminRequest::SendAs {
-            login,
-            address: sender,
-            enabled,
-        } => {
-            let login = address(&login, config)?;
-            let sender = address(&sender, config)?;
-            let id = store
-                .change_authority(auth.changes.clone(), move |store| {
-                    store.set_send_as(&login, &sender, enabled)
-                })
-                .await?;
-            (
-                "send_as_changed",
-                json!({"account_id":id,"enabled":enabled}),
-            )
-        }
-        AdminRequest::ReloadTls => {
-            let tls = tls.clone();
-            tokio::task::spawn_blocking(move || tls.reload()).await??;
-            ("tls_reloaded", json!({"reloaded":true}))
+    let (event, authority) = match &request {
+        AdminRequest::Status => ("admin_status", false),
+        AdminRequest::CredentialCreate { .. } => ("credential_created", false),
+        AdminRequest::CredentialList { .. } => ("credential_listed", false),
+        AdminRequest::CredentialRevoke { .. } => ("credential_revoked", true),
+        AdminRequest::AccountDisable { .. } => ("account_disabled", true),
+        AdminRequest::SendAs { .. } => ("send_as_changed", true),
+        AdminRequest::ReloadTls => ("tls_reloaded", false),
+    };
+    let result = if matches!(request, AdminRequest::ReloadTls) {
+        let tls = tls.clone();
+        tokio::task::spawn_blocking(move || tls.reload()).await??;
+        json!({"reloaded":true})
+    } else {
+        let credential = if request.needs_credential(config)? {
+            Some(auth.generate().await?)
+        } else {
+            None
+        };
+        let config = config.clone();
+        let apply = move |store: &mut Store| request.apply(store, &config, credential, mode);
+        if authority {
+            store.change_authority(auth.changes.clone(), apply).await?
+        } else {
+            store.call(apply).await?
         }
     };
-    log_event(event, json!({})); // Never serialize response/request into audit logs.
+    log_event(event, json!({}));
     Ok(result)
 }
 

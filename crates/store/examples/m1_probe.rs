@@ -164,18 +164,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         require_disposable_volume(root)?;
     }
     match mode {
-        "seed" | "seed-legacy" | "crash" => {
+        "seed" | "crash" => {
             if root.exists() {
                 return Err("probe seed refuses an existing directory".into());
+            }
+            if mode == "crash" && point.starts_with("schema_") {
+                // Establish the empty file and its name durably before testing
+                // the SQLite initialization transaction in the power-cut lab.
+                std::fs::create_dir(root)?;
+                let db = std::fs::File::create(root.join("meta.sqlite"))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
+                    db.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+                }
+                db.sync_all()?;
+                drop(db);
+                #[cfg(unix)]
+                {
+                    std::fs::File::open(root)?.sync_all()?;
+                    std::fs::File::open(root.parent().ok_or("missing parent")?)?.sync_all()?;
+                }
+                let fault = point.to_owned();
+                let runtime = StorageRuntime::default().with_hook(move |at| {
+                    if at.name() == fault {
+                        stop_at(at.name());
+                    }
+                    Ok(())
+                });
+                Store::open_with_runtime(root, options(), runtime)?;
+                return Err("initialization fault point was not reached".into());
             }
             let mut store = Store::open(root, options())?;
             store.create_account(&address(), 100 * 1024 * 1024)?;
             deliver(&mut store, BASE).await?;
             drop(store);
-            if mode == "seed-legacy" || point.starts_with("migration_") {
-                let mut connection = rusqlite::Connection::open(root.join("meta.sqlite"))?;
-                rustymail_store::legacy_lab_fixture(&mut connection, 1)?;
-            }
             if mode == "crash" {
                 let fault = point.to_owned();
                 let runtime = StorageRuntime::default().with_hook(move |at| {
@@ -218,24 +242,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("RUSTYMAIL_SEEDED");
         }
         "verify" => {
-            let version_before_reopen: u32 = {
-                let connection = rusqlite::Connection::open(root.join("meta.sqlite"))?;
-                connection.pragma_query_value(None, "user_version", |r| r.get(0))?
+            // After an interrupted initialization, only an empty database or
+            // the complete current schema may exist. Recreate only the empty case.
+            let initialized_before_reopen: bool = {
+                let db = rusqlite::Connection::open(root.join("meta.sqlite"))?;
+                db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='account')",
+                    [],
+                    |r| r.get(0),
+                )?
             };
-            let expected_version = if point == "migration_applied" {
-                1
-            } else {
-                rustymail_store::CURRENT_VERSION
-            };
-            if version_before_reopen != expected_version {
-                return Err("migration did not recover atomically".into());
+            if initialized_before_reopen != (point != "schema_applied") {
+                return Err("initialization did not recover atomically".into());
             }
-            let store = Store::open_existing(root, options())?;
+            let store = if point.starts_with("schema_") {
+                Store::open(root, options())?
+            } else {
+                Store::open_existing(root, options())?
+            };
             let report = store.check_integrity()?;
             if !report.healthy() {
                 return Err("recovered store is inconsistent".into());
             }
-            let expected = if matches!(point, "after_commit" | "acknowledged") {
+            let expected = if point.starts_with("schema_") {
+                0
+            } else if matches!(point, "after_commit" | "acknowledged") {
                 2
             } else {
                 1
@@ -273,7 +304,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!(
                 "RUSTYMAIL_VERIFIED:{}",
-                serde_json::json!({"point":point,"messages":expected,"integrity":report,"schema":rustymail_store::CURRENT_VERSION,"version_before_reopen":version_before_reopen})
+                serde_json::json!({"point":point,"messages":expected,"integrity":report,"initialized_before_reopen":initialized_before_reopen})
             );
         }
         "smtp-ack" => smtp_transaction(root, false)?,

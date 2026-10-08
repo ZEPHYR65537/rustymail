@@ -45,7 +45,7 @@ def report(output, **values):
 
 
 class Lab:
-    command = 'serve-lab-smtp'
+    command = 'lab-smtp'
 
     def configure(self, text, certificates):
         return text
@@ -59,7 +59,7 @@ class Lab:
         self.hidden = {'creationflags': subprocess.CREATE_NO_WINDOW} if self.suffix else {}
 
     def ctl(self, *args):
-        return subprocess.run([str(self.binaries/('rustymailctl'+self.suffix)), '--config', str(self.config), *args],
+        return subprocess.run([str(self.binaries/('rustymail'+self.suffix)), 'admin', '--config', str(self.config), *args],
                               capture_output=True, text=True, encoding='utf-8', check=True, timeout=90, **self.hidden).stdout
 
     def __enter__(self):
@@ -81,7 +81,7 @@ class Lab:
                       'certificate_file':str(certs/'server.pem'), 'private_key_file':str(certs/'server.key'),
                       **{key:f'127.0.0.1:{port}' for key, port in self.ports.items()},
                       'disk_reserve_bytes':1, 'disk_reserve_percent':1, 'connections':8, 'connections_per_ip':8,
-                      'imap_sessions_per_account':4, 'ingest_concurrency':2, 'tls_handshakes':2,
+                      'ingest_concurrency':2, 'tls_handshakes':2,
                       'message_bytes':65536, 'header_bytes':4096, 'recipients_per_message':1,
                       'temporary_reserved_bytes':135168, 'shutdown_grace_seconds':1,
                       'smtp_command_seconds':30, 'data_idle_seconds':3, 'data_total_seconds':6,
@@ -102,7 +102,7 @@ class Lab:
             self.context = ssl.create_default_context(cafile=str(certs/'ca.pem'))
             self.log_path = self.base/'daemon.log'
             self.log = self.log_path.open('wb')
-            self.process = subprocess.Popen([str(self.binaries/('rustymaild'+self.suffix)), '--config', str(self.config), self.command],
+            self.process = subprocess.Popen([str(self.binaries/('rustymail'+self.suffix)), 'serve', '--config', str(self.config), '--mode', self.command],
                                             stdout=subprocess.DEVNULL, stderr=self.log, **self.hidden)
             deadline = time.monotonic()+30
             while True:

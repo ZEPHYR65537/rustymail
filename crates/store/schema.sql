@@ -1,8 +1,6 @@
--- Migration 0001. SQLite 3.37+ required for STRICT tables.
+-- Current development schema. No compatibility with earlier experimental stores.
 -- Times are signed Unix milliseconds. IDs are lowercase 128-bit hex strings;
 -- format validation, ownership, quota and state transitions also require code.
-
-
 
 
 CREATE TABLE account (
@@ -57,8 +55,6 @@ CREATE TABLE blob (
     id TEXT PRIMARY KEY CHECK (length(id) = 32),
     size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
     sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
-    mime_metadata BLOB NOT NULL CHECK (length(mime_metadata) <= 1048576),
-    metadata_version INTEGER NOT NULL CHECK (metadata_version > 0),
     created_at_ms INTEGER NOT NULL
 ) STRICT;
 
@@ -91,12 +87,16 @@ CREATE TABLE delivery (
     generation INTEGER NOT NULL DEFAULT 0 CHECK (generation >= 0),
     last_smtp_code INTEGER CHECK (last_smtp_code BETWEEN 200 AND 599),
     diagnostic TEXT CHECK (length(diagnostic) <= 2048),
+    lifecycle_reason TEXT CHECK (lifecycle_reason IN ('smtp_permanent','expired','content','counter','manual')),
+    possibly_delivered INTEGER NOT NULL DEFAULT 0 CHECK (possibly_delivered IN (0,1)),
+    closed_at_ms INTEGER,
+    notification_state TEXT NOT NULL DEFAULT 'pending' CHECK (notification_state IN ('pending','created','suppressed')),
+    notification_error TEXT CHECK (length(notification_error)<=256),
+    notification_due_ms INTEGER NOT NULL DEFAULT 0,
     UNIQUE (message_id, recipient),
     CHECK ((lease_token IS NULL) = (lease_until_ms IS NULL)),
     CHECK (state != 'leased' OR lease_token IS NOT NULL)
 ) STRICT;
-CREATE INDEX delivery_due ON delivery(state, next_attempt_at_ms, id);
-CREATE INDEX delivery_domain ON delivery(destination_domain, state);
 
 CREATE TABLE mailbox_message (
     mailbox_id INTEGER NOT NULL REFERENCES mailbox(id),
@@ -138,9 +138,53 @@ CREATE TABLE backup_pin (
     PRIMARY KEY (backup_id, blob_id)
 ) STRICT;
 
--- Required application transactions (not implemented by this schema):
--- * acceptance + delivery + local UID + quota + mailbox_event, all-or-nothing;
--- * per-account ownership and source-message agreement for delivery_id;
--- * UID allocation and monotonic UIDNEXT/event_seq;
--- * queue claim/result fenced by lease_token + generation;
--- * coordinated snapshot/pins and offline GC with exclusive instance lock.
+CREATE TABLE maintenance_run (
+    id TEXT PRIMARY KEY CHECK (length(id) = 32),
+    started_at_ms INTEGER NOT NULL,
+    completed_at_ms INTEGER,
+    min_age_seconds INTEGER NOT NULL CHECK (min_age_seconds >= 0),
+    status TEXT NOT NULL CHECK (status IN ('running', 'complete', 'interrupted'))
+) STRICT;
+
+CREATE TABLE gc_action (
+    run_id TEXT NOT NULL REFERENCES maintenance_run(id),
+    kind TEXT NOT NULL CHECK (kind IN ('staging', 'orphan')),
+    object_id TEXT NOT NULL CHECK (length(object_id) = 32),
+    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+    status TEXT NOT NULL CHECK (status IN ('planned', 'deleted')),
+    PRIMARY KEY (run_id, kind, object_id)
+) STRICT;
+
+CREATE TABLE queue_message (
+    message_id TEXT PRIMARY KEY REFERENCES message(id),
+    body_mode TEXT NOT NULL CHECK (body_mode IN ('7bit', '8bitmime')),
+    max_age_seconds INTEGER NOT NULL CHECK (max_age_seconds BETWEEN 1 AND 604800)
+) STRICT;
+
+CREATE TABLE queue_lease (
+    delivery_id TEXT PRIMARY KEY REFERENCES delivery(id),
+    phase TEXT NOT NULL CHECK (phase IN ('ready', 'body'))
+) STRICT;
+
+CREATE INDEX queue_ready ON delivery(next_attempt_at_ms, id)
+    WHERE route='relay' AND state IN ('pending', 'deferred');
+CREATE INDEX queue_recovery ON delivery(id) WHERE route='relay' AND state='leased';
+CREATE INDEX queue_list ON delivery(id) WHERE route='relay';
+
+CREATE INDEX queue_expiry ON delivery(expires_at_ms,id)
+    WHERE route='relay' AND state IN ('pending','deferred');
+CREATE INDEX queue_notification ON delivery(notification_due_ms,id)
+    WHERE route='relay' AND state='failed' AND notification_state='pending';
+
+CREATE TABLE queue_admin_event (
+    id INTEGER PRIMARY KEY,
+    delivery_id TEXT NOT NULL REFERENCES delivery(id),
+    action TEXT NOT NULL CHECK (action IN ('hold','retry','close_unknown')),
+    before_state TEXT NOT NULL,
+    after_state TEXT NOT NULL,
+    note TEXT NOT NULL CHECK (length(note) BETWEEN 1 AND 512),
+    allow_duplicate INTEGER NOT NULL CHECK (allow_duplicate IN (0,1)),
+    extend_expired INTEGER NOT NULL CHECK (extend_expired IN (0,1)),
+    created_at_ms INTEGER NOT NULL
+) STRICT;
+CREATE INDEX queue_admin_delivery ON queue_admin_event(delivery_id,id);

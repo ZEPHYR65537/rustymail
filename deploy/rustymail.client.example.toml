@@ -1,5 +1,4 @@
 # Client-only configuration. Paths are relative to this file.
-schema_version = 1
 sender = "alice@example.com"
 
 [smtp]

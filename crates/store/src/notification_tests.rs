@@ -58,38 +58,6 @@ fn scalar(store: &Store, sql: &str) -> i64 {
 }
 
 #[tokio::test]
-async fn schema_three_retry_history_is_conservatively_preserved_as_unknown() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("mail");
-    let mut store = Store::open(&root, options()).unwrap();
-    seed(
-        &mut store,
-        "alice@example.com",
-        &["target@remote.test"],
-        86400,
-    )
-    .await;
-    fail_all(&mut store);
-    crate::migration::legacy_lab_fixture(&mut store.connection, 3).unwrap();
-    // An old retry could have followed either a known failure or an unknown
-    // final reply. Schema 3 retained neither the cause nor operator history.
-    store
-        .connection
-        .execute("UPDATE delivery SET attempts=2 WHERE route='relay'", [])
-        .unwrap();
-    drop(store);
-    let mut store = reopen(&root).await;
-    let row = store.queue_list("", 1).unwrap().pop().unwrap();
-    assert_eq!(row.state, "uncertain");
-    assert!(row.possibly_delivered);
-    assert!(matches!(
-        store.notification_next(&policy()).unwrap(),
-        NotificationWork::Empty
-    ));
-    assert!(store.check_integrity().unwrap().healthy());
-}
-
-#[tokio::test]
 async fn clock_jump_during_preparation_cannot_poison_notification_deadlines() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("mail");
@@ -107,6 +75,7 @@ async fn clock_jump_during_preparation_cannot_poison_notification_deadlines() {
     fail_all(&mut store);
     let task = next(&mut store);
     let id = task.delivery_id().to_owned();
+    let original_due = store.queue_show(&id).unwrap().notification_due_ms;
     let prepared = task.prepare().await.unwrap();
     clock.wall.fetch_add(86_400_000, Ordering::SeqCst);
     assert!(matches!(
@@ -117,7 +86,10 @@ async fn clock_jump_during_preparation_cannot_poison_notification_deadlines() {
         store.notification_failed(&id, &StoreError::Quota),
         Err(StoreError::ClockChanged)
     ));
-    assert_eq!(store.queue_show(&id).unwrap().notification_due_ms, 0);
+    assert_eq!(
+        store.queue_show(&id).unwrap().notification_due_ms,
+        original_due
+    );
     assert_eq!(scalar(&store, "SELECT count(*) FROM notification"), 0);
     // Restore the clock and restart, as required by the existing sticky guard.
     clock.wall.fetch_sub(86_400_000, Ordering::SeqCst);
@@ -200,6 +172,96 @@ async fn reopen(root: &Path) -> Store {
             Err(e) => panic!("{e}"),
         }
     }
+}
+
+#[tokio::test]
+async fn due_retry_precedes_new_failures_and_expirations() {
+    for expire in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let clock = TestClock::new();
+        let mut store = Store::open_with_runtime(
+            directory.path().join("mail"),
+            options(),
+            StorageRuntime::with_clock(clock.clone()),
+        )
+        .unwrap();
+        seed(&mut store, "alice@example.com", &["old@remote.test"], 86400).await;
+        fail_all(&mut store);
+        let old = store.queue_list("", 128).unwrap()[0].id.clone();
+        store
+            .set_account_quota(&address("alice@example.com"), 0)
+            .unwrap();
+        assert!(matches!(
+            store.notification_next(&policy()),
+            Err(StoreError::Quota)
+        ));
+        store
+            .set_account_quota(&address("alice@example.com"), 100_000)
+            .unwrap();
+        assert!(matches!(
+            store.notification_next(&policy()).unwrap(),
+            NotificationWork::Empty
+        ));
+        clock.advance(61_000);
+        seed(
+            &mut store,
+            "alice@example.com",
+            &["new@remote.test"],
+            if expire { 1 } else { 86400 },
+        )
+        .await;
+        if expire {
+            clock.advance(2000);
+            assert_eq!(store.queue_expire(128).unwrap(), 1);
+        } else {
+            fail_all(&mut store);
+        }
+        let task = next(&mut store);
+        assert_eq!(task.delivery_id(), old);
+        store
+            .notification_commit(task.prepare().await.unwrap())
+            .unwrap();
+        notify(&mut store).await;
+        assert_eq!(scalar(&store, "SELECT count(*) FROM notification"), 2);
+        assert!(store.check_integrity().unwrap().healthy());
+    }
+}
+
+#[tokio::test]
+async fn known_failure_during_clock_jump_remains_notifiable_after_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("mail");
+    let clock = TestClock::new();
+    let mut store =
+        Store::open_with_runtime(&root, options(), StorageRuntime::with_clock(clock.clone()))
+            .unwrap();
+    seed(
+        &mut store,
+        "alice@example.com",
+        &["fail@remote.test"],
+        86400,
+    )
+    .await;
+    let lease = store
+        .queue_claim(&QueuePolicy::default(), 1)
+        .unwrap()
+        .pop()
+        .unwrap();
+    clock.wall.fetch_add(86_400_000, Ordering::SeqCst);
+    store
+        .queue_finish(lease, QueueResult::Permanent(550))
+        .unwrap();
+    assert_eq!(store.queue_list("", 1).unwrap()[0].state, "failed");
+    assert!(matches!(
+        store.notification_next(&policy()),
+        Err(StoreError::ClockChanged)
+    ));
+    clock.wall.fetch_sub(86_400_000, Ordering::SeqCst);
+    drop(store);
+    let mut store =
+        Store::open_with_runtime(&root, options(), StorageRuntime::with_clock(clock)).unwrap();
+    notify(&mut store).await;
+    assert!(store.check_integrity().unwrap().healthy());
 }
 
 #[tokio::test]
@@ -614,53 +676,5 @@ async fn expiry_is_independent_of_due_time_and_unknown_history_survives_retry_an
         let details:Vec<String>=store.connection.prepare(&format!("EXPLAIN QUERY PLAN SELECT id FROM delivery INDEXED BY {index} WHERE route='relay' AND {predicate} ORDER BY {order} LIMIT 128")).unwrap().query_map([],|r|r.get(3)).unwrap().collect::<Result<_,_>>().unwrap();
         assert!(details.iter().any(|d| d.contains(index)));
         assert!(!details.iter().any(|d| d.contains("TEMP B-TREE")));
-    }
-}
-
-#[tokio::test]
-async fn schema_three_upgrade_preserves_existing_notification_and_old_queue_atomically() {
-    for fault in [FaultPoint::MigrationApplied, FaultPoint::MigrationCommitted] {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join("mail");
-        let mut store = Store::open(&root, options()).unwrap();
-        seed(&mut store, "alice@example.com", &["first@one.test"], 86400).await;
-        fail_all(&mut store);
-        let report = notify(&mut store).await;
-        seed(&mut store, "alice@example.com", &["second@two.test"], 86400).await;
-        fail_all(&mut store);
-        crate::legacy_lab_fixture(&mut store.connection, 3).unwrap();
-        drop(store);
-        let runtime = StorageRuntime::default().with_hook(move |p| {
-            if p == fault {
-                Err(io::Error::other("schema cut"))
-            } else {
-                Ok(())
-            }
-        });
-        assert!(Store::open_with_runtime(&root, options(), runtime).is_err());
-        let db = Connection::open(root.join("meta.sqlite")).unwrap();
-        assert_eq!(
-            crate::migration::validate(&db).unwrap(),
-            if fault == FaultPoint::MigrationApplied {
-                3
-            } else {
-                4
-            }
-        );
-        drop(db);
-        let mut store = reopen(&root).await;
-        notify(&mut store).await;
-        assert_eq!(scalar(&store, "SELECT count(*) FROM notification"), 2);
-        let messages = store
-            .list_messages(&address("alice@example.com"), 0, 10)
-            .unwrap();
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].message_id, report.message_id);
-        assert_eq!(messages[0].uid, 1);
-        assert!(matches!(
-            store.notification_next(&policy()).unwrap(),
-            NotificationWork::Empty
-        ));
-        assert!(store.check_integrity().unwrap().healthy());
     }
 }

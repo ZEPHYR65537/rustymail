@@ -1,18 +1,16 @@
 //! Single-writer, file-backed message storage.
 mod blob;
 mod identity;
+mod local_delivery;
 mod maintenance;
-mod migration;
 mod notification;
 mod queue;
 mod runtime;
+mod schema;
 mod verified;
 pub use blob::{PreparedMessage, StagedMessage};
 pub use identity::{CredentialRecord, CredentialSummary, Principal, SubmissionIdentity};
 pub use maintenance::{GcCandidate, GcOptions, GcReport, GcRun, OperationSummary};
-#[cfg(any(test, feature = "test-support"))]
-pub use migration::legacy_lab_fixture;
-pub use migration::{CURRENT_VERSION, MigrationRecord};
 pub use notification::{
     NotificationPolicy, NotificationTask, NotificationWork, PreparedNotification,
 };
@@ -28,7 +26,7 @@ use rustymail_core::Address;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     fs::{self, File, TryLockError},
     io::{self, Read, Write},
     path::{Path, PathBuf},
@@ -54,9 +52,9 @@ pub enum StoreError {
     #[error("invalid internal object identifier")]
     InvalidId,
     #[error("unsupported database schema; refusing to modify it")]
-    SchemaVersion,
-    #[error("migration outcome unknown; preserve the database and reopen to inspect its version")]
-    MigrationOutcomeUnknown,
+    UnsupportedSchema,
+    #[error("initialization outcome unknown; preserve the database and reopen to inspect it")]
+    InitializationOutcomeUnknown,
     #[error("maintenance requires no live staged or prepared messages")]
     MaintenanceBusy,
     #[error("destination already exists; refusing to overwrite it")]
@@ -285,13 +283,18 @@ impl Store {
         // default creation mode). The containing directory is also private.
         drop(private_file(&database_path, false)?);
         let mut connection = Connection::open(database_path)?;
-        let version = migration::validate(&connection)?;
+        let initialized = schema::validate(&connection)?;
+        if !initialized && !create {
+            return Err(StoreError::UnsupportedSchema);
+        }
         connection.busy_timeout(std::time::Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "cache_size", -i64::from(options.cache_kib))?;
-        migration::upgrade(&mut connection, version, &runtime)?;
+        if !initialized {
+            schema::initialize(&mut connection, &runtime)?;
+        }
         let result: String = connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
         if result != "ok" {
             return Err(StoreError::Integrity);
@@ -476,70 +479,17 @@ impl Store {
                 already_committed: true,
             });
         }
-        // Revalidate every recipient inside the committing transaction. RCPT
-        // acceptance did not reserve the right to exceed quota or use a removed account.
-        let mut targets = Vec::with_capacity(recipients.len());
-        let mut quotas: BTreeMap<i64, (u64, u64, u64)> = BTreeMap::new();
-        for recipient in &recipients {
-            let target: Option<(i64, i64, u64, u64, u64, i64)> = transaction.query_row(
-                "SELECT a.account_id,m.id,u.quota_bytes,u.used_bytes,m.uidnext,m.event_seq FROM address a JOIN account u ON u.id=a.account_id JOIN mailbox m ON m.account_id=u.id AND m.name='INBOX' WHERE a.address=?1 AND a.receive_enabled=1 AND u.status='active'",
-                [recipient], |r| Ok((r.get(0)?, r.get(1)?, unsigned_column(r,2)?, unsigned_column(r,3)?, unsigned_column(r,4)?, r.get(5)?))).optional()?;
-            let (account_id, mailbox_id, quota, used, uidnext, event_seq) =
-                target.ok_or(StoreError::RecipientUnavailable)?;
-            if uidnext > u64::from(u32::MAX) || event_seq == i64::MAX {
-                return Err(StoreError::UidExhausted);
-            }
-            quotas
-                .entry(account_id)
-                .and_modify(|value| value.0 += 1)
-                .or_insert((1, quota, used));
-            targets.push((recipient.clone(), mailbox_id));
-        }
-        for &(count, quota, used) in quotas.values() {
-            let next = message
-                .size
-                .checked_mul(count)
-                .and_then(|n| used.checked_add(n))
-                .ok_or(StoreError::Quota)?;
-            if next > quota || next > i64::MAX as u64 {
-                return Err(StoreError::Quota);
-            }
-        }
         let id = Uuid::new_v4().simple().to_string();
         let now = self.runtime.now_ms()?;
         self.runtime.hit(FaultPoint::DatabaseWrite)?;
-        transaction.execute("INSERT INTO blob(id,size_bytes,sha256,mime_metadata,metadata_version,created_at_ms) VALUES(?1,?2,?3,?4,1,?5)",
-            params![message.id, message.size as i64, message.hash, b"{}".as_slice(), now])?;
+        transaction.execute(
+            "INSERT INTO blob(id,size_bytes,sha256,created_at_ms) VALUES(?1,?2,?3,?4)",
+            params![message.id, message.size as i64, message.hash, now],
+        )?;
         transaction.execute("INSERT INTO message(id,ingest_key,blob_id,source,reverse_path,accepted_at_ms,authenticated_account_id) VALUES(?1,?2,?3,?4,?5,?6,?7)",
             params![id, plan.operation_id, message.id, if account.is_some() {"submission"} else {"smtp"}, sender, now, account])?;
-        for (recipient, mailbox_id) in targets {
-            // Read again because distinct aliases may target the same mailbox.
-            let (uid, event_seq): (u64, i64) = transaction.query_row(
-                "SELECT uidnext,event_seq FROM mailbox WHERE id=?1",
-                [mailbox_id],
-                |r| Ok((unsigned_column(r, 0)?, r.get(1)?)),
-            )?;
-            if uid > u64::from(u32::MAX) || event_seq == i64::MAX {
-                return Err(StoreError::UidExhausted);
-            }
-            let delivery_id = Uuid::new_v4().simple().to_string();
-            let domain = recipient.rsplit_once('@').map_or("", |(_, d)| d);
-            transaction.execute("INSERT INTO delivery(id,message_id,recipient,route,destination_domain,state,next_attempt_at_ms,expires_at_ms) VALUES(?1,?2,?3,'local',?4,'delivered',?5,?5)",
-                params![delivery_id,id,recipient,domain,now])?;
-            transaction.execute("INSERT INTO mailbox_message(mailbox_id,uid,message_id,delivery_id,internaldate_ms) VALUES(?1,?2,?3,?4,?5)",
-                params![mailbox_id,uid as i64,id,delivery_id,now])?;
-            transaction.execute(
-                "UPDATE mailbox SET uidnext=uidnext+1,event_seq=event_seq+1 WHERE id=?1",
-                [mailbox_id],
-            )?;
-            transaction.execute("INSERT INTO mailbox_event(mailbox_id,event_seq,kind,uid,payload,created_at_ms) VALUES(?1,?2,'append',?3,?4,?5)",
-                params![mailbox_id,event_seq+1,uid as i64,b"{}".as_slice(),now])?;
-        }
-        for (account_id, (count, _, _)) in quotas {
-            transaction.execute(
-                "UPDATE account SET used_bytes=used_bytes+?1 WHERE id=?2",
-                params![(message.size * count) as i64, account_id],
-            )?;
+        for recipient in &recipients {
+            local_delivery::deliver(&transaction, recipient, &id, message.size, now)?;
         }
         if let Some(relay) = relay {
             queue::insert_relay(
